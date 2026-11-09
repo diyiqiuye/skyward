@@ -218,15 +218,38 @@ fn run(s: &Service, who: &Credentials) -> Result<String> {
 /// tree, reading and writing nothing of the recovery's, finding its
 /// libraries where it names them, and as `who`.
 fn command(s: &Service, who: &Credentials) -> Command {
-    let mut cmd = Command::new(&s.path);
+    let mut cmd = match s.installed {
+        // The program is of the installed system's build: it asks for the
+        // loader of that system, which is the one its own programs are
+        // started with.
+        true => match crate::secure::loader() {
+            Ok(Some(loader)) => {
+                let mut cmd = Command::new(&loader.path);
+                cmd.arg(&s.path);
+                cmd
+            }
+            _ => Command::new(&s.path),
+        },
+        false => Command::new(&s.path),
+    };
     cmd.args(&s.args).current_dir("/").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     if !s.libraries.is_empty() {
         cmd.env("LD_LIBRARY_PATH", s.libraries.join(":"));
     }
     let who = who.clone();
+    let installed = s.installed;
     // Only system calls run between the fork and the exec, on what was
     // worked out before it.
-    unsafe { cmd.pre_exec(move || who.take_on()) };
+    unsafe {
+        cmd.pre_exec(move || {
+            if installed {
+                // The files the program names are the installed system's
+                // own, and it needs the room to be found.
+                crate::secure::isolate()?;
+            }
+            who.take_on()
+        })
+    };
     cmd
 }
 
@@ -255,10 +278,15 @@ pub fn pin(services: &[Service], mounted: &[Mounted]) -> Result<Vec<PathBuf>> {
     let mut busy: Vec<PathBuf> = Vec::new();
     for file in files {
         let Some(m) = mounted.iter().find(|m| file.starts_with(&m.mount_point)) else { continue };
-        if !fs::metadata(&file).with_context(|| format!("stat {}", file.display()))?.is_file() {
+        // A file that is no longer there, and one whose pages cannot be
+        // held, is one the partition does not wait for: the partition is
+        // still kept whole, for the device stays while it is detached.
+        if !fs::metadata(&file).is_ok_and(|m| m.is_file()) {
             continue;
         }
-        lock(&file)?;
+        if let Err(e) = lock(&file) {
+            let _ = skyward_sys::kmsg(&format!("could not keep {} in memory: {e:#}", file.display()));
+        }
         let _ = skyward_sys::kmsg(&format!("kept {} in memory", file.display()));
         if !busy.contains(&m.mount_point) {
             busy.push(m.mount_point.clone());
@@ -316,10 +344,25 @@ pub fn reachable() -> bool {
 }
 
 /// A process already running `path`.
+///
+/// A program of the installed system is run through that system's own
+/// loader, and the loader is what the kernel shows as the program's own
+/// image; the program itself is named in the command line, so both are
+/// looked at.
 pub fn running(path: &str) -> Option<u32> {
     fs::read_dir("/proc").ok()?.flatten().find_map(|e| {
         let pid: u32 = e.file_name().to_str()?.parse().ok()?;
-        (fs::read_link(e.path().join("exe")).ok()? == Path::new(path)).then_some(pid)
+        if fs::read_link(e.path().join("exe")).ok()? == Path::new(path) {
+            return Some(pid);
+        }
+        // The program's own name is one of the arguments of the loader's
+        // command line: the first is the loader itself, and the program it
+        // was asked to run follows. A program the loader runs is named by
+        // no argument but the one that asks for it, so every argument is
+        // looked at.
+        let line = fs::read(e.path().join("cmdline")).ok()?;
+        let asked = Path::new(path).as_os_str().as_encoded_bytes();
+        line.split(|b| *b == 0).any(|arg| arg == asked).then_some(pid)
     })
 }
 

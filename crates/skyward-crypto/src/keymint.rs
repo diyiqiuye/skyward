@@ -8,6 +8,20 @@ use skyward_binder::{service, status};
 /// hardware wrapped.
 pub const SERVICE: &str = "android.hardware.security.keymint.IKeyMintDevice/default";
 
+/// The service a phone whose system has only the service of the older
+/// kind offers instead of one of the newer kind: its key store hands out
+/// one of the newer kind, built on the older one.
+pub const COMPAT: &str = "android.security.compat";
+
+/// What that service is called in the terms its own interface uses.
+const COMPAT_INTERFACE: &str = "android.security.compat.IKeystoreCompatService";
+
+/// Its first method: to have a key service of the newer kind.
+const GET_KEY_MINT_DEVICE: u32 = 1;
+
+/// The level of trust a phone's own secure world is.
+const TRUSTED_ENVIRONMENT: i32 = 1;
+
 const DEVICE: &str = "android.hardware.security.keymint.IKeyMintDevice";
 const OPERATION: &str = "android.hardware.security.keymint.IKeyMintOperation";
 
@@ -41,7 +55,6 @@ const PADDING_NONE: i32 = 1;
 
 /// What a key parameter is tagged with. The high bits say which kind of
 /// value follows, which is why the numbers look arbitrary.
-const TAG_PURPOSE: i32 = 536_870_913;
 const TAG_BLOCK_MODE: i32 = 536_870_916;
 const TAG_PADDING: i32 = 536_870_918;
 const TAG_MAC_LENGTH: i32 = 805_307_371;
@@ -50,7 +63,6 @@ const TAG_NONCE: i32 = -1_879_047_191;
 
 /// Which arm of a parameter's value is used.
 const VALUE_PADDING_MODE: i32 = 3;
-const VALUE_KEY_PURPOSE: i32 = 7;
 const VALUE_INTEGER: i32 = 11;
 const VALUE_BLOB: i32 = 14;
 const VALUE_BLOCK_MODE: i32 = 2;
@@ -125,12 +137,35 @@ pub struct KeyMint<'a> {
     device: Handle<'a>,
 }
 
+/// Ask the service that hands out a key service of the newer kind for one,
+/// and take a share of it so it outlives the reply that named it.
+fn device_of<'a>(binder: &'a Binder, compat: Handle<'_>) -> Result<Handle<'a>> {
+    let mut call = Parcel::call(COMPAT_INTERFACE);
+    call.i32(TRUSTED_ENVIRONMENT);
+    let reply = compat.transact(GET_KEY_MINT_DEVICE, &call).context("ask the phone's key store for a key service")?;
+    let mut read = reply.read();
+    status::ok(&mut read).context("ask the phone's key store for a key service")?;
+    match read.object().context("read the key service it named")? {
+        Some(h) => Handle::hold(binder, h).context("hold the key service open"),
+        None => anyhow::bail!("the phone's key store named no key service"),
+    }
+}
+
 impl<'a> KeyMint<'a> {
     /// Reach the running key service, or say that none is.
+    ///
+    /// A phone whose own system carries a key service of the newer kind
+    /// offers it under its own name. One whose system has only the service
+    /// of the older kind has no such service of its own: its key store
+    /// offers one of the newer kind instead, which is built on the older
+    /// one and hands it out to whoever asks.
     pub fn open(binder: &'a Binder) -> Result<KeyMint<'a>> {
-        let device = service::find(binder, SERVICE)?
-            .with_context(|| format!("{SERVICE} is not running; the phone's key service has to be started first"))?;
-        Ok(KeyMint { device })
+        if let Some(device) = service::find(binder, SERVICE)? {
+            return Ok(KeyMint { device });
+        }
+        let compat = service::find(binder, COMPAT)?
+            .with_context(|| format!("{SERVICE} is not running and {COMPAT} does not offer one either; the phone's key service has to be started first"))?;
+        Ok(KeyMint { device: device_of(binder, compat)? })
     }
 
     pub fn hardware(&self) -> Result<Hardware> {
@@ -207,6 +242,36 @@ impl<'a> KeyMint<'a> {
         Ok(out)
     }
 
+    /// Ask for a decryption with only the parameters named, and give back
+    /// what the service refused it with, or zero where it opened one. This
+    /// is for finding out what a phone's key service will take; it reads
+    /// nothing and changes nothing, and the decryption it opens where it
+    /// is let through is dropped with the reply.
+    pub fn probe(&self, key_blob: &[u8], app_id: &[u8], nonce: &[u8], names: &[&str]) -> Result<i32> {
+        let mut call = Parcel::call(DEVICE);
+        call.i32(PURPOSE_DECRYPT);
+        call.blob(key_blob);
+        call.i32(names.len() as i32);
+        for name in names {
+            match *name {
+                "block" => parameter(&mut call, TAG_BLOCK_MODE, Value::Enum(VALUE_BLOCK_MODE, BLOCK_MODE_GCM)),
+                "padding" => parameter(&mut call, TAG_PADDING, Value::Enum(VALUE_PADDING_MODE, PADDING_NONE)),
+                "mac" => parameter(&mut call, TAG_MAC_LENGTH, Value::Integer(128)),
+                "app" => parameter(&mut call, TAG_APPLICATION_ID, Value::Blob(app_id)),
+                "nonce" => parameter(&mut call, TAG_NONCE, Value::Blob(nonce)),
+                "purpose" => parameter(&mut call, 536_870_913, Value::Enum(7, PURPOSE_DECRYPT)),
+                other => anyhow::bail!("no parameter is named {other}"),
+            }
+        }
+        call.none();
+        let reply = self.device.transact(BEGIN, &call)?;
+        let mut read = reply.read();
+        match status::ok(&mut read) {
+            Ok(()) => Ok(0),
+            Err(e) => Ok(status::refused_with(&e).unwrap_or(-9999)),
+        }
+    }
+
     /// Undo an AES-GCM encryption the key service did with `key_blob`. The
     /// service only hands back the plaintext when `app_id` is the one the
     /// key was made for, so a wrong secret fails here rather than yielding
@@ -241,8 +306,13 @@ impl<'a> KeyMint<'a> {
     /// with, and a binding to nothing named is not the same to it as none
     /// named at all, so naming an empty one leaves it unable to unwrap a
     /// key that was made bound to nothing.
+    ///
+    /// What the key is used for is not among them: it is the first argument
+    /// of the call itself, and a phone whose key service of the newer kind
+    /// is built on one of the older kind turns the call away when the same
+    /// thing is said twice.
     fn gcm_params(call: &mut Parcel, app_id: &[u8], nonce: &[u8]) {
-        call.i32(if app_id.is_empty() { 5 } else { 6 });
+        call.i32(if app_id.is_empty() { 4 } else { 5 });
         parameter(call, TAG_BLOCK_MODE, Value::Enum(VALUE_BLOCK_MODE, BLOCK_MODE_GCM));
         parameter(call, TAG_PADDING, Value::Enum(VALUE_PADDING_MODE, PADDING_NONE));
         parameter(call, TAG_MAC_LENGTH, Value::Integer(128));
@@ -250,7 +320,6 @@ impl<'a> KeyMint<'a> {
             parameter(call, TAG_APPLICATION_ID, Value::Blob(app_id));
         }
         parameter(call, TAG_NONCE, Value::Blob(nonce));
-        parameter(call, TAG_PURPOSE, Value::Enum(VALUE_KEY_PURPOSE, PURPOSE_DECRYPT));
     }
 
     /// Open a decryption with the key service and keep hold of it.

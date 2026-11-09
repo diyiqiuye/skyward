@@ -9,6 +9,8 @@ abootimg-oxide = "0.5.2"
 anyhow = { workspace = true }
 cpio = "0.4.1"
 libc = { workspace = true }
+# The gzip ramdisks the older builds carry.
+flate2 = { version = "1.1.4", default-features = false, features = ["rust_backend"] }
 lz4_flex = "0.14.0"
 
 [dev-dependencies]

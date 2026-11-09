@@ -1,5 +1,8 @@
 use anyhow::{bail, Context, Result};
 use cpio::{NewcBuilder, NewcReader};
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression as Level;
 use std::ffi::{CString, OsStr};
 use std::fs;
 use std::io::{Cursor, Read, Write};
@@ -42,18 +45,42 @@ impl Entry {
     }
 }
 
+/// How a boot image's ramdisk is compressed. The way it comes out of the
+/// stock image is the way it goes back in: a kernel built to unpack gzip at
+/// boot wants gzip, and one given LZ4 wants that.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Compression {
+    /// LZ4, as AOSP packs boot ramdisks for the phones of the newer builds.
+    #[default]
+    Lz4,
+    /// gzip, as the older builds do.
+    Gzip,
+}
+
 /// An initramfs held in memory, so entries keep their owners, modes and
 /// device numbers exactly as the archive had them.
 pub struct Ramdisk {
     pub entries: Vec<Entry>,
+    /// The compression the archive arrived in, which `encode` keeps.
+    pub compression: Compression,
 }
 
 impl Ramdisk {
-    /// Unpack an LZ4 (legacy framing) compressed newc archive, as Android
-    /// boot images carry.
+    /// Unpack a gzip or LZ4 (frame) compressed newc archive, as Android boot
+    /// images carry.
     pub fn decode(compressed: &[u8]) -> Result<Self> {
-        let mut cpio = Vec::new();
-        lz4_flex::frame::FrameDecoder::new(compressed).read_to_end(&mut cpio).context("lz4 decode")?;
+        let (cpio, compression) = match compressed.get(..2) {
+            Some([0x1f, 0x8b]) => {
+                let mut out = Vec::new();
+                GzDecoder::new(compressed).read_to_end(&mut out).context("gzip decode")?;
+                (out, Compression::Gzip)
+            }
+            _ => {
+                let mut out = Vec::new();
+                lz4_flex::frame::FrameDecoder::new(compressed).read_to_end(&mut out).context("lz4 decode")?;
+                (out, Compression::Lz4)
+            }
+        };
         let mut entries = Vec::new();
         let mut rest = Cursor::new(cpio.as_slice());
         loop {
@@ -77,14 +104,19 @@ impl Ramdisk {
             entries.push(entry);
             rest = r.finish().context("cpio entry end")?;
         }
-        Ok(Ramdisk { entries })
+        Ok(Ramdisk { entries, compression })
     }
 
-    /// Pack as a newc archive compressed the way AOSP packs boot ramdisks,
-    /// with the reference `lz4` tool in legacy framing (the kernel's initramfs
-    /// unpacker reads no other LZ4 framing) at its highest compression.
+    /// Pack as a newc archive, compressed the way the stock archive was:
+    /// LZ4 with the reference `lz4` tool in legacy framing (the kernel's
+    /// initramfs unpacker reads no other LZ4 framing) at its highest
+    /// compression, or gzip.
     pub fn encode(&self) -> Result<Vec<u8>> {
-        lz4_tool(&self.archive()?)
+        let archive = self.archive()?;
+        match self.compression {
+            Compression::Lz4 => lz4_tool(&archive),
+            Compression::Gzip => gzip(&archive),
+        }
     }
 
     /// Pack as a newc archive, uncompressed.
@@ -273,6 +305,14 @@ pub fn lz4_legacy(input: &[u8]) -> Vec<u8> {
         out.extend_from_slice(&block);
     }
     out
+}
+
+fn gzip(input: &[u8]) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut writer = GzEncoder::new(&mut out, Level::best());
+    writer.write_all(input).context("gzip the archive")?;
+    writer.finish().context("gzip the archive")?;
+    Ok(out)
 }
 
 fn lz4_tool(input: &[u8]) -> Result<Vec<u8>> {

@@ -12,6 +12,10 @@ const PREFIX_BYTES: usize = 128;
 const SECDISCARDABLE_PREFIX: &[u8] = b"Android secdiscardable SHA512";
 const KEYGEN_PREFIX: &[u8] = b"Android key wrapping key generation SHA512";
 
+/// What a directory says when the key it holds is bound to no password:
+/// the secure world holds it, and nothing a user knows is needed to open it.
+const NO_PASSWORD: &str = "nopassword";
+
 const NONCE_BYTES: usize = 12;
 const TAG_BYTES: usize = 16;
 const KEY_BYTES: usize = 32;
@@ -70,7 +74,14 @@ impl StoredKey {
             bail!("{} is written in layout {}, Skyward reads layout {VERSION}", dir.display(), version.trim());
         }
         if dir.join(FN_STRETCHING).exists() {
-            bail!("{} was written by an Android too old for Skyward to read", dir.display());
+            // The file says how the key was derived from a password. A
+            // phone that keeps the key in the secure world writes that it
+            // is bound to no password at all, which is the case Skyward
+            // reads; anything else is a derivation Skyward cannot undo.
+            let said = fs::read_to_string(dir.join(FN_STRETCHING)).unwrap_or_default();
+            if said.trim() != NO_PASSWORD {
+                bail!("{} was written by an Android too old for Skyward to read", dir.display());
+            }
         }
         let secdiscardable_hash = match dir.join(FN_SECDISCARDABLE).exists() {
             true => hash_with_prefix(SECDISCARDABLE_PREFIX, &read(FN_SECDISCARDABLE)?),
@@ -81,6 +92,22 @@ impl StoredKey {
             false => None,
         };
         Ok(StoredKey { encrypted: read(FN_ENCRYPTED_KEY)?, key_blob, secdiscardable_hash })
+    }
+
+    /// The blob the key service gave for the key that wraps this one, if
+    /// there is one.
+    pub fn blob(&self) -> Option<&[u8]> {
+        self.key_blob.as_deref()
+    }
+
+    /// The three things the key service is asked for when this key is
+    /// unwrapped: the handle the secure world knows the wrapping key by,
+    /// what that key is bound to, and the nonce the wrapping was made
+    /// under. This is for asking a phone's key service what it will take.
+    pub fn probe_parts(&self) -> Option<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        let blob = self.key_blob.clone()?;
+        let nonce = self.encrypted.get(..NONCE_BYTES.min(self.encrypted.len()))?.to_vec();
+        Some((blob, self.app_id(&[]), nonce))
     }
 
     /// What the wrapping is bound to: the directory's own hash and whatever

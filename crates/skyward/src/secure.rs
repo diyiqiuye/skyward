@@ -8,9 +8,42 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+/// Where the linker of the recovery reads a description of where the
+/// libraries are.
+const LINKER_DESCRIPTION: &str = "/system/etc/ld.config.txt";
+
+/// Open the bundle that carries the library the key service of the
+/// installed system needs, and tell the linker where it is.
+///
+/// The key service of the installed system links against a library the
+/// recovery carries none of, which lives in a bundle of the installed
+/// system's own. The linker of the recovery is told where the libraries
+/// of that bundle are, for it would not look there of its own accord.
+pub fn open_i18n_bundle() -> Result<bool> {
+    let Some(at) = bundle(I18N_BUNDLE)? else {
+        return Ok(false);
+    };
+    let libs = at.join(BUNDLE_LIBS);
+    if !libs.is_dir() {
+        return Ok(false);
+    }
+    let description = format!("namespace.default.search.paths += {}/{BUNDLE_LIBS}\n", at.display());
+    let mut text = fs::read_to_string(LINKER_DESCRIPTION)
+        .with_context(|| format!("read {LINKER_DESCRIPTION}"))?;
+    if !text.contains(&description) {
+        text.push_str(&description);
+        fs::write(LINKER_DESCRIPTION, text).with_context(|| format!("write {LINKER_DESCRIPTION}"))?;
+    }
+    Ok(true)
+}
+
 /// Where a phone keeps the bundles of shared libraries its own partitions
 /// were built against.
 const BUNDLE_DIRS: [&str; 4] = ["/mnt/system_ext/apex", "/mnt/system/system/apex", "/mnt/product/apex", "/vendor/apex"];
+
+/// The bundle that carries the library the key service of the installed
+/// system needs, which nothing else of the recovery carries.
+const I18N_BUNDLE: &str = "com.android.i18n";
 
 /// The file inside a bundle that holds its filesystem. It is stored whole,
 /// so the bundle can be opened where it lies.
@@ -69,10 +102,248 @@ const HARDWARE_DIRECTORY: &str = "android.hidl.manager@1.2::IServiceManager/defa
 /// recovery there is nothing else to set it.
 const DIRECTORY_OFF: &str = "hwservicemanager.disabled";
 
+/// The linker of the recovery reads a description of where the libraries of
+/// the recovery are, and it reads it when a program of the recovery starts.
+/// The description names the folders of the recovery, so a program of the
+/// installed system, started from the installed system's own folder, is
+/// covered by none of it: the linker then looks in no place at all for the
+/// libraries of that program, and the program cannot start.
+///
+/// The description is told about the installed system's own folder, so that
+/// the programs of that system, which are run from there, are covered by it
+/// as well.
+const LINKER_CONFIGS: [&str; 2] = ["/linkerconfig/ld.config.txt", "/system/etc/ld.config.txt"];
+const INSTALLED_BIN: &str = "/mnt/system/system/bin";
+/// Where the bundle with the libraries of the installed system's own key
+/// service keeps them.
+const I18N_LIBS: &str = "/apex/com.android.i18n/lib64";
+
+/// Tell the linker about the folder the programs of the installed system
+/// are run from, so that it looks for their libraries where the installed
+/// system keeps them.
+pub fn tell_the_linker_where() -> Result<()> {
+    for path in LINKER_CONFIGS {
+        let config = Path::new(path);
+        let said = match fs::read_to_string(config) {
+            Ok(said) => said,
+            // The linker may read either of the two; one of them may not
+            // be there, and the other is then the one it reads.
+            Err(_) => continue,
+        };
+        let mut out = String::new();
+        // The folder a program of the installed system is run from is named
+        // before the section of the description that follows: named after
+        // it, the linker takes it for part of that section and takes no
+        // notice of it.
+        if !said.starts_with(&format!("dir.recovery = {INSTALLED_BIN}")) {
+            out.push_str(&format!("dir.recovery = {INSTALLED_BIN}\n"));
+        }
+        out.push_str(&said);
+        // The key store of the installed system links against the libraries
+        // of the bundle of the installed system's own runtime, and those are
+        // kept in a bundle of their own, which the section must name.
+        if !said.contains(I18N_LIBS) {
+            out.push_str(&format!("namespace.default.search.paths += {I18N_LIBS}\n"));
+        }
+        fs::write(config, out)
+            .with_context(|| format!("tell the linker of the installed system's own folder in {}", config.display()))?;
+    }
+    Ok(())
+}
+
 /// Where a recovery is given the descriptions of the services the running
 /// system carries. A recovery has no framework of its own, so this is read
 /// as the framework's description of what it offers.
 const RECOVERY_MANIFEST: &str = "/system/etc/vintf/manifest.xml";
+
+/// Where the installed system keeps the description of the services the
+/// framework itself offers. The directory of the software services reads
+/// it when it starts, and turns away every service the running system
+/// does not describe.
+const FRAMEWORK_DESCRIPTION: &str = "/mnt/system/system/etc/vintf/manifest.xml";
+
+/// Where the installed system keeps the descriptions of the services of
+/// its own, each in a file of its own.
+const FRAMEWORK_DESCRIPTION_DIR: &str = "/mnt/system/system/etc/vintf/manifest";
+
+/// Give the directory of the phone's software services the description of
+/// the services the installed system offers.
+///
+/// A recovery carries no libbinder of its own, so the directory of the
+/// software services is the installed system's own, and that one reads
+/// the description of the framework when it starts and turns away every
+/// service the running system does not describe. Without the description
+/// of the installed system it would offer nothing at all.
+pub fn publish_framework_description() -> Result<usize> {
+    let into = Path::new(RECOVERY_DESCRIPTIONS);
+    fs::create_dir_all(into).with_context(|| format!("make {}", into.display()))?;
+    fs::set_permissions(into, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+        .with_context(|| format!("open {} to every user", into.display()))?;
+    let mut copied = 0;
+    let mut take = |from: &Path| -> Result<()> {
+        let name = from.file_name().with_context(|| format!("{} names no file", from.display()))?;
+        let text = fs::read(from).with_context(|| format!("read {}", from.display()))?;
+        let to = into.join(name);
+        fs::write(&to, text).with_context(|| format!("copy {}", from.display()))?;
+        fs::set_permissions(&to, std::os::unix::fs::PermissionsExt::from_mode(0o644))
+            .with_context(|| format!("let every user read {}", to.display()))?;
+        copied += 1;
+        Ok(())
+    };
+    let from = Path::new(FRAMEWORK_DESCRIPTION);
+    if from.is_file() {
+        take(from)?;
+    }
+    // The descriptions of the framework's own services, each in a file of
+    // its own, are read as well: the directory reads the whole of the
+    // folder at once, and one file it cannot make sense of leaves it
+    // describing nothing.
+    if let Ok(listing) = fs::read_dir(FRAMEWORK_DESCRIPTION_DIR) {
+        for entry in listing.flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|e| e != "xml") {
+                continue;
+            }
+            take(&path)?;
+        }
+    }
+    Ok(copied)
+}
+
+/// The driver's own filesystem, and the nodes the phone's services and the
+/// WLAN's supplicant register through. The stock recovery mounts it only for
+/// its factory reset, so a phone that starts here with none is given them
+/// the way that script gives them.
+pub fn mount_binders() -> Result<()> {
+    const DIR: &str = "/dev/binderfs";
+    const NODES: [(&str, &str); 3] = [("/dev/binder", "binder"), ("/dev/hwbinder", "hwbinder"), ("/dev/vndbinder", "vndbinder")];
+    if !Path::new(DIR).join("binder").exists() {
+        fs::create_dir_all(DIR).with_context(|| format!("make {DIR}"))?;
+        let name = |s: &str| std::ffi::CString::new(s).expect("no terminator in a fixed name");
+        let (source, target, kind, data) = (name("binder"), name(DIR), name("binder"), name("stats=global"));
+        let made = unsafe { libc::mount(source.as_ptr(), target.as_ptr(), kind.as_ptr(), 0, data.as_ptr().cast()) };
+        if made != 0 {
+            return Err(std::io::Error::last_os_error()).with_context(|| format!("mount {DIR}"));
+        }
+    }
+    for (node, inside) in NODES {
+        let node = Path::new(node);
+        if std::fs::symlink_metadata(node).is_err() {
+            let to = Path::new(DIR).join(inside);
+            std::os::unix::fs::symlink(&to, node).with_context(|| format!("point {} at {}", node.display(), to.display()))?;
+        }
+        fs::set_permissions(node, std::os::unix::fs::PermissionsExt::from_mode(0o666))
+            .with_context(|| format!("open {} to every program", node.display()))?;
+    }
+    Ok(())
+}
+
+/// The loader the installed system's own programs ask for, and the
+/// directory of the lowest libraries that come with it. A phone whose
+/// system carries no bundle of its own has none, and its programs are
+/// loaded by the recovery's loader.
+pub struct Loader {
+    pub path: PathBuf,
+    pub libraries: PathBuf,
+}
+
+/// The installed system's loader, opening the bundle it comes in where the
+/// phone carries one.
+pub fn loader() -> Result<Option<Loader>> {
+    let Some(at) = bundle(RUNTIME_BUNDLE)? else {
+        return Ok(None);
+    };
+    let path = at.join(BUNDLE_LOADER);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    Ok(Some(Loader { path, libraries: at.join(BUNDLE_LIBS) }))
+}
+
+/// The places the installed system's own files are found, and the places
+/// the recovery has its own of the same names. Only the first is bound:
+/// the others are, in the recovery, links into the first, and binding
+/// them would make a loop of them.
+/// The folders of the installed system that are bound where the programs
+/// that serve them look for them.
+///
+/// The folders are bound one at a time, and not the whole of the installed
+/// system's own root: the linker of the recovery reads a description of
+/// where the libraries are, and the installed system keeps none of its
+/// own in the place the linker reads it from. What the linker of the
+/// recovery says is where the libraries of the installed system are, and
+/// that is what the programs of that system need.
+const INSTALLED: [(&str, &str); 1] = [("/mnt/system/system/lib64", "/system/lib64")];
+
+/// The installed system's own partitions that a program run from its system
+/// partition never reads, and which are therefore let go of by the namespace
+/// it is given. A mount kept in a namespace holds its partition: an update
+/// cannot take the partition away to write over it while one does.
+const PARTITIONS_UNUSED: [&str; 3] = ["/mnt/system_ext", "/mnt/product", "/mnt/mi_ext"];
+
+/// Gives the child a mount namespace of its own, in which the installed
+/// system's own files are the ones found at the usual places. The
+/// recovery's are of an older build, and the programs of the installed
+/// system would not run against them.
+pub fn isolate() -> std::io::Result<()> {
+    unsafe {
+        if libc::unshare(libc::CLONE_NEWNS) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // Nothing of the namespace is shared with the recovery, so what is
+        // mounted in it stays there.
+        if libc::mount(
+            std::ptr::null(),
+            c"/".as_ptr(),
+            std::ptr::null(),
+            libc::MS_REC | libc::MS_PRIVATE,
+            std::ptr::null(),
+        ) != 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    for (from, to) in INSTALLED {
+        let from = Path::new(from);
+        if !from.is_dir() {
+            continue;
+        }
+        // A folder can only be bound where one already is. The recovery's
+        // own of this name may be a link into the folder that is bound
+        // over it, and a link bound over would make a loop of them, so it
+        // is replaced by a folder of its own. The recovery's own folder of
+        // this name holds only the few libraries the recovery itself
+        // needs, and the programs of the installed system need the rest.
+        let to = Path::new(to);
+        if to.is_symlink() {
+            let _ = std::fs::remove_file(to);
+        }
+        if !to.exists() {
+            let _ = std::fs::create_dir_all(to);
+        }
+        let from = std::ffi::CString::new(from.as_os_str().as_encoded_bytes()).expect("no terminator in a fixed name");
+        let to = std::ffi::CString::new(to.as_os_str().as_encoded_bytes()).expect("no terminator in a fixed name");
+        unsafe {
+            // The bind is recursive: the installed system's own places
+            // for its other parts point at each other, and only a tree
+            // taken whole keeps them from looping.
+            if libc::mount(from.as_ptr(), to.as_ptr(), std::ptr::null(), libc::MS_BIND | libc::MS_REC, std::ptr::null()) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+    }
+    // The parts of the installed system this namespace has no use for are
+    // let go of: a mount kept here holds the partition it shows, and an
+    // update that has to take that partition away is refused while it is
+    // held here. Nothing this namespace runs reads them, so they go.
+    for point in PARTITIONS_UNUSED {
+        let point = std::ffi::CString::new(point).expect("no terminator in a fixed name");
+        unsafe {
+            libc::umount2(point.as_ptr(), libc::MNT_DETACH);
+        }
+    }
+    Ok(())
+}
 
 /// What the directory for the phone's hardware services of the older kind
 /// needs before it will run inside a recovery. The program is the installed
@@ -162,6 +433,28 @@ pub fn libraries() -> Result<Option<PathBuf>> {
     Ok(bundle(&format!("com.android.vndk.v{version}"))?.map(|at| at.join(BUNDLE_LIBS)))
 }
 
+/// Where a bundle is copied to before it is opened. A loop device holds the
+/// file it was given open for as long as it is attached, and a bundle opened
+/// where it lies keeps the partition it lies on from being unmounted: an
+/// update that has to take the installed system's partitions away would be
+/// refused. Copied first, the loop holds the copy, which is on no partition
+/// an update writes over.
+const BUNDLE_COPIES: &str = "/tmp/bundles";
+
+/// A copy of `file` on the recovery's own memory, made once.
+fn copy_of(file: &Path) -> Result<PathBuf> {
+    let dir = Path::new(BUNDLE_COPIES);
+    fs::create_dir_all(dir).with_context(|| format!("make {}", dir.display()))?;
+    let name = file.file_name().with_context(|| format!("{} names no file", file.display()))?;
+    let to = dir.join(name);
+    let length = fs::metadata(file).with_context(|| format!("stat {}", file.display()))?.len();
+    if fs::metadata(&to).is_ok_and(|m| m.len() == length) {
+        return Ok(to);
+    }
+    fs::copy(file, &to).with_context(|| format!("copy {} to {}", file.display(), to.display()))?;
+    Ok(to)
+}
+
 /// Open the bundle of this name where it lies, and give where it is. A
 /// bundle the phone does not carry gives nothing; one already open is left
 /// as it is.
@@ -173,6 +466,7 @@ fn bundle(name: &str) -> Result<Option<PathBuf>> {
     let Some(file) = BUNDLE_DIRS.iter().map(|d| Path::new(d).join(format!("{name}.apex"))).find(|p| p.is_file()) else {
         return Ok(None);
     };
+    let file = copy_of(&file)?;
     let (offset, length) = image(&file)?;
     let device = skyward_block::loopdev::attach(&file, offset, length)?;
     fs::create_dir_all(&at).with_context(|| format!("make {}", at.display()))?;
@@ -247,6 +541,15 @@ pub fn publish_descriptions(wanted: &[String], files: &[String]) -> Result<usize
         // of what had registered with it, and nothing registers again by
         // itself, so init starts each of those services again, as the
         // installed system's init does whenever its directory restarts.
+        //
+        // A recovery that has no directory of its own uses the installed
+        // system's, which the recovery's own init does not run and cannot
+        // start again. That one is given its descriptions before it
+        // starts, and the services that register with it register of
+        // their own accord, so nothing is to be started again here.
+        if crate::services::running(DIRECTORY_PROGRAM).is_none() {
+            return Ok(copied);
+        }
         let registered = registered()?;
         let was = crate::services::running(DIRECTORY_PROGRAM);
         skyward_sys::set_prop("ctl.restart", DIRECTORY_SERVICE).context("have the service directory start again")?;

@@ -64,11 +64,58 @@ impl Message {
         self.data.extend_from_slice(&v.to_le_bytes());
     }
 
-    /// A run of bytes: the frame that says where they are, then an address
-    /// for the bytes themselves.
+    /// A run of bytes: the frame that says how long they are, then an
+    /// address for the bytes themselves. The far side reads the frame to
+    /// learn the length and then follows the address the frame's second
+    /// address points at.
     pub fn bytes(&mut self, value: &[u8]) {
         let at = self.keep(value.to_vec());
         self.framed(at, value.len(), value.len());
+    }
+
+    /// A run of elements, each of the same size: the frame that says how
+    /// many there are and where they are, then the bytes of all of them
+    /// together. The far side walks them one by one, each a stride apart.
+    /// It gives back the address of the frame and of the bytes, which the
+    /// caller needs for the parts of a run that carry bytes of their own.
+    pub fn elements(&mut self, count: u32, body: &[u8]) -> (usize, usize) {
+        let at = self.keep(body.to_vec());
+        let mut frame = Vec::with_capacity(FRAME_BYTES);
+        frame.extend_from_slice(&at.to_le_bytes());
+        frame.extend_from_slice(&(count as u32).to_le_bytes());
+        frame.extend_from_slice(&[0; 4]);
+        let frame_at = self.keep(frame);
+        let frame_index = self.address(frame_at, FRAME_BYTES, None);
+        let body_index = self.address(at, body.len(), Some((frame_index, 0)));
+        (frame_index, body_index)
+    }
+
+    /// The bytes one element of a run carries beside itself: they live in
+    /// the run, at the place where the element keeps the address of them.
+    pub fn element_bytes(&mut self, parent: usize, offset: u64, at: u64, length: usize) {
+        self.address(at, length, Some((parent, offset)));
+    }
+
+    /// Bytes written as they are: the far side reads them in one piece,
+    /// as a whole, rather than as a frame and the run it points at. It
+    /// gives back the address of the object, for bytes kept inside it.
+    pub fn raw(&mut self, value: &[u8]) -> usize {
+        let at = self.keep(value.to_vec());
+        self.address(at, value.len(), None)
+    }
+
+    /// Bytes kept inside another, at the place where that one keeps the
+    /// address of them. With none at all, the place is left empty.
+    pub fn inside(&mut self, parent: usize, offset: u64, value: &[u8]) {
+        let at = if value.is_empty() { 0 } else { self.keep(value.to_vec()) };
+        self.address(at, value.len(), Some((parent, offset)));
+    }
+
+    /// Hold on to bytes the driver will read, and say where they are, so
+    /// that a caller which writes them into a run of its own can point at
+    /// them.
+    pub fn hold(&mut self, bytes: Vec<u8>) -> u64 {
+        self.keep(bytes)
     }
 
     /// Text, which is a run of bytes with a terminator the count leaves
@@ -90,7 +137,7 @@ impl Message {
 
     /// The pair of addresses a run of bytes is written as: the frame, and
     /// then the bytes it points at.
-    fn framed(&mut self, at: u64, count: usize, length: usize) {
+    fn framed(&mut self, at: u64, count: usize, length: usize) -> usize {
         let mut frame = Vec::with_capacity(FRAME_BYTES);
         frame.extend_from_slice(&at.to_le_bytes());
         frame.extend_from_slice(&(count as u32).to_le_bytes());
@@ -98,22 +145,24 @@ impl Message {
         frame.extend_from_slice(&[0; 4]);
         let frame_at = self.keep(frame);
         let parent = self.address(frame_at, FRAME_BYTES, None);
-        self.address(at, length, Some(parent));
+        self.address(at, length, Some((parent, 0)));
+        parent
     }
 
     /// Write an address among the values and say where it sits, which is
     /// how the driver finds it. The answer is which address this is, for
     /// the one pointing inside it to name.
-    fn address(&mut self, at: u64, length: usize, inside: Option<usize>) -> usize {
+    fn address(&mut self, at: u64, length: usize, inside: Option<(usize, u64)>) -> usize {
         let which = self.addresses.len();
         self.addresses.push(self.data.len() as u64);
         self.data.extend_from_slice(&ADDRESS.to_le_bytes());
         self.data.extend_from_slice(&inside.map_or(0, |_| INSIDE_ANOTHER).to_le_bytes());
         self.data.extend_from_slice(&at.to_le_bytes());
         self.data.extend_from_slice(&(length as u64).to_le_bytes());
-        self.data.extend_from_slice(&(inside.unwrap_or(0) as u64).to_le_bytes());
-        // The address inside the frame is the frame's first field.
-        self.data.extend_from_slice(&0u64.to_le_bytes());
+        let (parent, offset) = inside.map_or((0, 0), |(parent, offset)| (parent as u64, offset));
+        self.data.extend_from_slice(&parent.to_le_bytes());
+        // Where inside the parent the address of these bytes is kept.
+        self.data.extend_from_slice(&offset.to_le_bytes());
         self.pointed += (length as u64).next_multiple_of(WORD);
         which
     }
@@ -161,9 +210,38 @@ impl<'a> Answer<'a> {
         Ok(i32::from_le_bytes(self.take(4)?.try_into().expect("four bytes")))
     }
 
+    /// A number of eight bytes, which is where the far side puts the
+    /// handles of the operations it begins.
+    pub fn i64(&mut self) -> Result<i64> {
+        Ok(i64::from_le_bytes(self.take(8)?.try_into().expect("eight bytes")))
+    }
+
     /// A truth value: a byte, padded to four as everything is.
     pub fn bool(&mut self) -> Result<bool> {
         Ok(self.take(4)?[0] != 0)
+    }
+
+    /// Whether what comes next is the address of a run of bytes. A run
+    /// that is empty is sometimes left with only its header.
+    pub fn next_is_object(&self) -> bool {
+        self.data.len() >= self.at + 4
+            && u32::from_le_bytes(self.data[self.at..self.at + 4].try_into().expect("four bytes")) == ADDRESS
+    }
+
+    /// The bytes an address in the reply points at, or nothing at all
+    /// where the far side left the run empty.
+    pub fn answered(&mut self) -> Result<&'a [u8]> {
+        let raw = self.take(ADDRESS_BYTES)?;
+        let kind = u32::from_le_bytes(raw[0..4].try_into().expect("four bytes"));
+        if kind != ADDRESS {
+            bail!("the reply holds {kind:#x} where an address was expected");
+        }
+        let at = u64::from_le_bytes(raw[8..16].try_into().expect("eight bytes"));
+        let length = u64::from_le_bytes(raw[16..24].try_into().expect("eight bytes"));
+        if at == 0 {
+            return Ok(&[]);
+        }
+        Ok(unsafe { std::slice::from_raw_parts(at as *const u8, length as usize) })
     }
 
     /// The bytes an address in the reply points at. The driver has already

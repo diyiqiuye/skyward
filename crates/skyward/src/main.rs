@@ -168,6 +168,10 @@ enum Cmd {
         /// as profile_key_name_decrypt_999.
         #[arg(long)]
         alias: Option<String>,
+        /// Try opening a decryption with each few of the parameters, and
+        /// say what the key service refused each with.
+        #[arg(long)]
+        probe: bool,
     },
     /// Say what the phone's credential service answers, which takes no
     /// credential and changes nothing.
@@ -324,11 +328,31 @@ fn main() -> Result<()> {
             Ok(())
         }
         #[cfg(target_os = "android")]
-        Cmd::Keymint { key, alias } => {
+        Cmd::Keymint { key, alias, probe } => {
             let binder = skyward_binder::driver::Binder::open()?;
             let service = skyward_crypto::keymint::KeyMint::open(&binder)?;
             let hw = service.hardware()?;
             println!("keymint {} version {} at security level {} by {}", hw.name, hw.version, hw.security_level, hw.author);
+            if probe {
+                let stored = skyward_crypto::keystore::StoredKey::load(&key)?;
+                let (blob, app_id, nonce) = stored.probe_parts().context("this key is not held by the key service")?;
+                let trials: [&[&str]; 9] = [
+                    &[],
+                    &["nonce"],
+                    &["app"],
+                    &["app", "nonce"],
+                    &["block", "padding", "mac", "app", "nonce", "purpose"],
+                    &["block", "padding", "mac", "app", "nonce"],
+                    &["padding", "mac", "app", "nonce", "purpose"],
+                    &["block", "mac", "app", "nonce", "purpose"],
+                    &["block", "padding", "app", "nonce", "purpose"],
+                ];
+                for names in trials {
+                    let said = service.probe(&blob, &app_id, &nonce, names)?;
+                    println!("  with {:?}: {said}", names);
+                }
+                return Ok(());
+            }
             if let Some(alias) = alias {
                 let held = skyward_crypto::keystore2::key_blob(Path::new(skyward_crypto::keystore2::DATABASE), &alias)?;
                 println!("{alias} is a key of {} bytes", held.len());
@@ -347,6 +371,10 @@ fn main() -> Result<()> {
             }
             let raw = stored.unwrap(skyward_crypto::keystore::Unwrap::Hardware(&service))?;
             println!("{} holds a key of {} bytes", key.display(), raw.len());
+            match service.ephemeral_storage_key(&raw) {
+                Ok(held) => println!("the storage hardware takes it for this start, {} bytes", held.len()),
+                Err(e) => println!("the storage hardware will not take it: {e:#}"),
+            }
             Ok(())
         }
         #[cfg(target_os = "android")]
@@ -386,7 +414,8 @@ fn main() -> Result<()> {
         Cmd::Data { credential, close: false } => {
             use skyward_crypto::data;
             let binder = skyward_binder::driver::Binder::open()?;
-            let service = skyward_crypto::keymint::KeyMint::open(&binder)?;
+            let hardware = skyward_binder::driver::Binder::hardware()?;
+            let service = skyward_crypto::keys::Keys::open(&binder, &hardware)?;
             let opening = data::open_without_credential(&service)?;
             match &opening.mounted {
                 Some(mounted) => {
@@ -517,6 +546,26 @@ fn bring_up(cfg: &DeviceConfig, slot: skyward_vab::Slot) -> Result<()> {
         let handed = hand_over(&cfg.owners)?;
         skyward_sys::kmsg(&format!("{handed} of the phone's own files handed to the accounts its init gives them"))?;
     }
+    secure::mount_binders().context("give the phone's services their nodes")?;
+    // A recovery that carries no libbinder of its own has no directory of
+    // the software services to offer, and the installed system's own is
+    // used instead. That one reads the description of the framework when
+    // it starts, and offers nothing without it.
+    let framework = secure::publish_framework_description()?;
+    if framework > 0 {
+        skyward_sys::kmsg(&format!("{framework} of the installed system's own service descriptions published"))?;
+    }
+    // The key service of the installed system links against a library the
+    // recovery carries none of, and the linker of the recovery is told
+    // where that library is before any of the installed system's own
+    // programs are started.
+    if secure::open_i18n_bundle()? {
+        skyward_sys::kmsg("the bundle with the libraries of the installed system's own key service is open")?;
+    }
+    // The linker of the recovery is told of the recovery's own folders
+    // only, so a program of the installed system, run from that system's
+    // own folder, would be covered by none of it.
+    secure::tell_the_linker_where().context("tell the linker of the installed system's own folder")?;
     let hardware: Vec<String> = services.iter().filter_map(|s| s.ready_hardware_service.clone()).collect();
     if !hardware.is_empty() {
         secure::prepare_hardware_directory(&hardware)?;
@@ -537,6 +586,16 @@ fn bring_up(cfg: &DeviceConfig, slot: skyward_vab::Slot) -> Result<()> {
     let libraries = secure::libraries()?;
     if let Some(dir) = &libraries {
         skyward_sys::kmsg(&format!("the phone's own libraries are at {}", dir.display()))?;
+    }
+    // A program of the installed system's own may keep what it holds where
+    // it is told to, and the place it is told to may be of no use to a
+    // recovery; the place is made for it before it starts.
+    for service in &services {
+        for arg in &service.args {
+            if arg.starts_with('/') && !Path::new(arg).exists() {
+                let _ = std::fs::create_dir_all(arg);
+            }
+        }
     }
     services::start(&services, libraries.as_deref())?;
     agree_on_the_notes_key(&registering)

@@ -10,6 +10,7 @@ use skyward_net::http::Servers;
 use skyward_net::iface;
 use skyward_net::reach::{self, Reach};
 use skyward_net::supplicant::{self, Bss, Control, Event as Told, Security};
+use crate::secure::Loader;
 use skyward_net::wlan::{self, Joined, Link, Next, Power, Stage, Traffic, Wlan};
 use std::fs;
 use std::net::Ipv4Addr;
@@ -121,7 +122,7 @@ impl Worker {
     /// driver's modules are found in, `libraries` the bundle of the vendor
     /// interface's libraries, and `servers` where the DNS servers the
     /// network gives are kept for whoever looks names up.
-    pub fn start(cfg: Config, modules: Vec<PathBuf>, libraries: Option<PathBuf>, servers: Servers) -> Result<Worker> {
+    pub fn start(cfg: Config, modules: Vec<PathBuf>, libraries: Option<PathBuf>, loader: Option<Loader>, servers: Servers) -> Result<Worker> {
         let (inbox_tx, inbox) = mpsc::channel();
         let (poked, poke) = pipe()?;
         let (told_tx, told) = mpsc::channel();
@@ -137,7 +138,7 @@ impl Worker {
                     let _ = told_tx.send(r);
                     signal(&rung);
                 };
-                let mut s = Station { cfg, modules, libraries, servers, state: Wlan::default(), running: None, back, tell: Box::new(tell) };
+                let mut s = Station { cfg, modules, libraries, loader, servers, state: Wlan::default(), running: None, back, tell: Box::new(tell) };
                 s.run(&inbox, &poked);
             })
             .context("start the WLAN thread")?;
@@ -241,6 +242,9 @@ struct Station {
     cfg: Config,
     modules: Vec<PathBuf>,
     libraries: Option<PathBuf>,
+    /// The loader and lowest libraries of the installed system, which the
+    /// phone's own supplicant was built for.
+    loader: Option<Loader>,
     servers: Servers,
     state: Wlan,
     running: Option<Running>,
@@ -342,7 +346,7 @@ impl Station {
 
     fn start(&self) -> Result<Running> {
         bring_up(&self.cfg, &self.modules)?;
-        let mut child = start_supplicant(&self.cfg, self.libraries.as_deref())?;
+        let mut child = start_supplicant(&self.cfg, self.libraries.as_deref(), self.loader.as_ref())?;
         let socket = Path::new(HOME).join("sockets").join(&self.cfg.interface);
         let connected = (|| -> Result<(Control, Control)> {
             let control = Control::open(&socket)?;
@@ -708,7 +712,7 @@ fn place(file: &Firmware) -> Result<()> {
 }
 
 /// Start the supplicant on the interface, and wait for its control socket.
-fn start_supplicant(cfg: &Config, libraries: Option<&Path>) -> Result<Child> {
+fn start_supplicant(cfg: &Config, libraries: Option<&Path>, loader: Option<&Loader>) -> Result<Child> {
     let home = Path::new(HOME);
     let sockets = home.join("sockets");
     fs::create_dir_all(&sockets).with_context(|| format!("make {}", sockets.display()))?;
@@ -728,7 +732,19 @@ fn start_supplicant(cfg: &Config, libraries: Option<&Path>) -> Result<Child> {
     if let Some(dir) = libraries {
         path.push(dir.to_string_lossy().into_owned());
     }
-    let mut child = Process::new(&cfg.supplicant)
+    // The loader's own libraries come before the rest: they are the lowest
+    // ones the phone's supplicant was built against, and a recovery carries
+    // older ones under the same names.
+    let mut command = match loader {
+        Some(loader) => {
+            path.insert(0, loader.libraries.to_string_lossy().into_owned());
+            let mut c = Process::new(&loader.path);
+            c.arg(&cfg.supplicant);
+            c
+        }
+        None => Process::new(&cfg.supplicant),
+    };
+    let mut child = command
         .args(["-i", &cfg.interface, "-D", "nl80211", "-c"])
         .arg(&settings)
         .env("LD_LIBRARY_PATH", path.join(":"))

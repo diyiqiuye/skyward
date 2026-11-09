@@ -168,11 +168,18 @@ fn normal_max(max: u32) -> Result<u32> {
         let cell: [u8; 4] = bytes.as_slice().try_into().map_err(|_| anyhow!("{} is not one cell", path.display()))?;
         Ok(u32::from_be_bytes(cell))
     };
-    let (normal, full) = NORMAL_MAX
-        .iter()
-        .find(|(normal, _)| node.join(normal).exists())
-        .with_context(|| format!("panel {name} gives its normal maximum as none of {NORMAL_MAX:?}"))?;
-    let (normal, full) = (cell(normal)?, cell(full)?);
+    let (normal, full) = match NORMAL_MAX.iter().find(|(normal, _)| node.join(normal).exists()) {
+        Some((normal, full)) => (cell(normal)?, cell(full)?),
+        // A panel that keeps no bright mode apart from its normal one gives
+        // only the backlight's own maximum, which is then both: the panel of
+        // the Xiaomi 10S does, qcom,mdss-dsi-bl-max-level and nothing else.
+        None => {
+            let max = cell("qcom,mdss-brightness-max-level")
+                .or_else(|_| cell("qcom,mdss-dsi-bl-max-level"))
+                .with_context(|| format!("panel {name} gives its maximum as none of {NORMAL_MAX:?} nor qcom,mdss-dsi-bl-max-level"))?;
+            (max, max)
+        }
+    };
     ensure!(normal > 0 && normal <= full, "panel {name}: normal maximum {normal} out of {full}");
     Ok((f64::from(max) * f64::from(normal) / f64::from(full)).round() as u32)
 }
@@ -1350,7 +1357,11 @@ pub fn run(cfg: &DeviceConfig, font: &Path, mono: &Path, request: bcb::Request, 
                 let _ = skyward_sys::kmsg(&format!("the vendor interface's libraries are not open: {e:#}"));
                 None
             });
-            Some(wlan::Worker::start(w.clone(), modules, libraries, servers.clone())?)
+            let loader = secure::loader().unwrap_or_else(|e| {
+                let _ = skyward_sys::kmsg(&format!("the installed system's loader is not open: {e:#}"));
+                None
+            });
+            Some(wlan::Worker::start(w.clone(), modules, libraries, loader, servers.clone())?)
         }
         None => None,
     };

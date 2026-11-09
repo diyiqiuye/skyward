@@ -87,8 +87,13 @@ read and set properties.
 
 ## Supported devices
 
+> This is a fork of [kirklin/skyward](https://github.com/kirklin/skyward) that adds the Xiaomi 10S
+> (`thyme`, Android 13). Upstream supports Android 16 and 17; Android 13 has no AIDL KeyMint of its
+> own, so both reaching the key service and letting go of the installed system's partitions differ.
+
 | Device | Codename | Tested system version |
 | --- | --- | --- |
+| Xiaomi 10S (**this fork**) | `thyme` | OS1.0.4.0.TGACNXM (Android 13) |
 | Xiaomi 17 Ultra | `nezha` | OS4.0.4.0.XPACNXM (Android 17) |
 | Xiaomi 13 Ultra | `ishtar` | OS3.0.308.0.WMACNXM (Android 16) |
 
@@ -120,6 +125,13 @@ the data partition.
 | 🚧 REDMI K100 Pro | `athens` | OS4.0.4.0.XPICNXM (Android 17) |
 | 🚧 REDMI K100 Pro Max | `songyuan` | OS4.0.4.0.XGNCNXM (Android 17) |
 
+<p align="center">
+  <img src="assets/thyme/decrypted.png" width="24%" alt="data decrypted">
+  <img src="assets/thyme/install.png" width="24%" alt="Install">
+  <img src="assets/thyme/backup.png" width="24%" alt="Backup">
+  <img src="assets/thyme/about.png" width="24%" alt="About">
+</p>
+
 ## Installing Skyward
 
 Skyward needs an unlocked bootloader. Download the zip for your phone from
@@ -131,6 +143,15 @@ the slot the phone runs from, with the phone in fastboot mode:
 ```sh
 unzip skyward-v0.2.0-nezha-OS4.0.4.0.XPACNXM.zip
 fastboot flash recovery skyward-v0.2.0-nezha-OS4.0.4.0.XPACNXM.img
+fastboot reboot recovery
+```
+
+The Xiaomi 10S (`thyme`) has no recovery partition of its own: the image goes
+into the running slot's boot partition, whose system image it replaces.
+
+```sh
+unzip skyward-v0.1.6-thyme-OS1.0.4.0.TGACNXM.zip
+fastboot flash boot_a skyward-v0.1.6-thyme-OS1.0.4.0.TGACNXM.img
 fastboot reboot recovery
 ```
 

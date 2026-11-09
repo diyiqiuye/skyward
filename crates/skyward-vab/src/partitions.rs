@@ -400,7 +400,12 @@ pub fn release_partitions(slot: Slot, busy: &[PathBuf]) -> Result<()> {
             mount::umount_detach_over(&m.mount_point)?;
         } else {
             mount::umount_over(&m.mount_point)?;
-            snapshots::unmap_snapshot(&m.partition)?;
+            // A partition another namespace still shows cannot be unmapped
+            // yet. It is left as it is: an update writes over the partition
+            // itself either way, and the device goes when it is let go.
+            if let Err(e) = snapshots::unmap_snapshot(&m.partition) {
+                let _ = skyward_sys::kmsg(&format!("keep {} as it is: {e:#}", m.partition));
+            }
         }
     }
     Ok(())

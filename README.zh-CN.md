@@ -83,8 +83,12 @@ Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 
 ## 支持的机型
 
+> 本分支是 [kirklin/skyward](https://github.com/kirklin/skyward) 的 fork，新增了小米 10S（`thyme`，Android 13）。
+> 上游只支持 Android 16/17，Android 13 没有原生 AIDL KeyMint，取密钥和让出已安装系统分区的做法都不同。
+
 | 机型 | 代号 | 测试的系统版本 |
 | --- | --- | --- |
+| 小米 10S（**本分支**） | `thyme` | OS1.0.4.0.TGACNXM（Android 13） |
 | 小米 17 Ultra | `nezha` | OS4.0.4.0.XPACNXM（Android 17） |
 | 小米 13 Ultra | `ishtar` | OS3.0.308.0.WMACNXM（Android 16） |
 
@@ -114,6 +118,13 @@ Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 | 🚧 REDMI K100 Pro | `athens` | OS4.0.4.0.XPICNXM（Android 17） |
 | 🚧 REDMI K100 Pro Max | `songyuan` | OS4.0.4.0.XGNCNXM（Android 17） |
 
+<p align="center">
+  <img src="assets/thyme/decrypted.png" width="24%" alt="data 分区已解密">
+  <img src="assets/thyme/install.png" width="24%" alt="安装">
+  <img src="assets/thyme/backup.png" width="24%" alt="备份">
+  <img src="assets/thyme/about.png" width="24%" alt="关于本机">
+</p>
+
 ## 安装 Skyward
 
 Skyward 需要已解锁的 bootloader。从 [Releases](https://github.com/kirklin/skyward/releases) 下载对应机型的 zip，每个文件都标有机型和代号，例如 Xiaomi 17 Ultra (nezha)。使用 `SHA256SUMS` 核对并解压之后，在手机处于 fastboot 模式的时候，把其中的镜像刷入当前运行槽位的 recovery 分区：
@@ -121,6 +132,14 @@ Skyward 需要已解锁的 bootloader。从 [Releases](https://github.com/kirkli
 ```sh
 unzip skyward-v0.2.0-nezha-OS4.0.4.0.XPACNXM.zip
 fastboot flash recovery skyward-v0.2.0-nezha-OS4.0.4.0.XPACNXM.img
+fastboot reboot recovery
+```
+
+小米 10S（`thyme`）没有独立的 recovery 分区，镜像刷进当前槽位的 boot 分区，那个槽的系统启动镜像会被它取代：
+
+```sh
+unzip skyward-v0.1.6-thyme-OS1.0.4.0.TGACNXM.zip
+fastboot flash boot_a skyward-v0.1.6-thyme-OS1.0.4.0.TGACNXM.img
 fastboot reboot recovery
 ```
 

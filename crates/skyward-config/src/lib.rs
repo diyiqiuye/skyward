@@ -347,6 +347,12 @@ pub struct Service {
     /// once it has ended, and it has to end well.
     #[serde(default)]
     pub oneshot: bool,
+    /// The program is of the installed system's own build: it is run
+    /// through that system's loader, in a place where the files it names
+    /// are that system's own and not the recovery's, which are of an
+    /// older build and would not hold it up.
+    #[serde(default)]
+    pub installed: bool,
     /// A property the program sets once it is ready for the rest. Programs
     /// are started in the order they are written, and one that says it has
     /// something to wait for holds up the ones after it.
@@ -507,7 +513,7 @@ impl DeviceConfig {
             let path = Path::new(log);
             let plain = path.components().all(|c| matches!(c, std::path::Component::RootDir | std::path::Component::Normal(_)));
             ensure!(
-                path.is_absolute() && plain && path.starts_with(DATA) && path != Path::new(DATA),
+                path.has_root() && plain && path.starts_with(DATA) && path != Path::new(DATA),
                 "[wipe] logs: {log} is not a folder inside {DATA}"
             );
         }
@@ -545,7 +551,7 @@ impl DeviceConfig {
         }
         if let Some(haptics) = &cfg.haptics {
             let file = &haptics.resonance;
-            ensure!(Path::new(file).is_absolute(), "[haptics] resonance: {file} is not an absolute path");
+            ensure!(Path::new(file).has_root(), "[haptics] resonance: {file} is not an absolute path");
             let Strength { lightest, strongest } = haptics.strength;
             ensure!(
                 0.0 < lightest && lightest < strongest && strongest <= 1.0,
@@ -556,7 +562,7 @@ impl DeviceConfig {
             for library in &logd.libraries {
                 let path = Path::new(library);
                 let plain = path.components().all(|c| matches!(c, std::path::Component::RootDir | std::path::Component::Normal(_)));
-                ensure!(path.is_absolute() && plain && path.file_name().is_some(), "[logd] libraries: {library} is not an absolute path to a file");
+                ensure!(path.has_root() && plain && path.file_name().is_some(), "[logd] libraries: {library} is not an absolute path to a file");
             }
         }
         for owners in &cfg.owners {
@@ -568,7 +574,7 @@ impl DeviceConfig {
             for file in &owners.paths {
                 let path = Path::new(file);
                 let plain = path.components().all(|c| matches!(c, std::path::Component::RootDir | std::path::Component::Normal(_)));
-                ensure!(path.is_absolute() && plain && path.file_name().is_some(), "[[owners]] paths: {file} is not an absolute path to a file");
+                ensure!(path.has_root() && plain && path.file_name().is_some(), "[[owners]] paths: {file} is not an absolute path to a file");
             }
         }
         if let Some(stock) = &cfg.stock {
@@ -601,7 +607,7 @@ impl DeviceConfig {
                         );
                         ensure!(plain && !file.path.is_empty(), "[wlan] firmware: {} is not a path from the top of {partition}", file.path);
                     }
-                    None => ensure!(path.is_absolute(), "[wlan] firmware: {} is not an absolute path", file.path),
+                    None => ensure!(path.has_root(), "[wlan] firmware: {} is not an absolute path", file.path),
                 }
             }
         }

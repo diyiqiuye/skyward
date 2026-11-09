@@ -30,8 +30,13 @@ struct Methods {
 /// The first version of Android whose directory declares the two lookups.
 const LOOKUPS_DECLARED: u32 = 36;
 
-/// How the directory of a recovery built as Android version `sdk` numbers
+/// How the directory of a phone built as Android version `sdk` numbers
 /// its methods.
+///
+/// The number is the one the directory of the phone that answers, not the
+/// one the recovery would have used: a recovery may have no directory of
+/// its own and ask the installed system's, and that one is of the
+/// installed system's build.
 fn methods_of(sdk: u32) -> Methods {
     match sdk >= LOOKUPS_DECLARED {
         true => Methods { check_service: 3, list_services: 6, is_declared: 9 },
@@ -39,15 +44,16 @@ fn methods_of(sdk: u32) -> Methods {
     }
 }
 
-/// The recovery's own version, which its property files give.
+/// The version of the directory that answers, which is the one the
+/// installed system carries. The recovery's own version is of no use
+/// here: the directory a recovery asks is the installed system's, and it
+/// numbers its methods as its own build does.
 const SDK: &str = "ro.build.version.sdk";
 
 fn methods() -> Result<Methods> {
-    let sdk = skyward_sys::prop(SDK).with_context(|| format!("the recovery says no {SDK}"))?;
+    let sdk = skyward_sys::prop(SDK).with_context(|| format!("the phone says no {SDK}"))?;
     Ok(methods_of(sdk.parse().with_context(|| format!("{SDK} is {sdk:?}"))?))
-}
-
-/// Every dump priority a service can register at.
+}/// Every dump priority a service can register at.
 const DUMP_PRIORITY_ALL: i32 = 0b1111;
 
 /// Ask any object which process serves it. libbinder answers this itself,
