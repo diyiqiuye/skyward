@@ -588,13 +588,6 @@ fn update_system<S>(ctx: &mut Context, mount: &Mount<S>, update: &Update) -> Res
     if state != SnapshotState::None {
         return Ok(Done::Decided(Outcome::Refused(Refusal::Pending(state))));
     }
-    // A phone whose super keeps room for one slot's system at a time cannot
-    // take an update written to the other slot: the write lands on the
-    // partitions this recovery reads the installed system from, and a
-    // recovery that runs from the slot's own boot is then left without one.
-    if skyward_vab::room_for_one_slot(slot)? {
-        return Ok(Done::Decided(Outcome::Refused(Refusal::RoomForOneSlot)));
-    }
     // The screen may have left the page before it heard the package came.
     if ctx.shared.cancelled() {
         return Ok(Done::Decided(Outcome::Cancelled));

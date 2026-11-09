@@ -1054,12 +1054,6 @@ pub fn refusal(l: Lang, r: &Refusal, codename: &str, source: Source, zone: usize
             "這個更新檔的安全性修補程式為 {package}，早於目前系統的 {installed}。",
             "This package's security patch is {package}, older than the current system's {installed}."
         ),
-        Refusal::RoomForOneSlot => l.pick([
-            "本机的 super 只放得下一个槽位的系统，装到另一个槽会覆盖当前系统，recovery 也会失去可用的系统分区。请在系统里更新，或改用刷入分区镜像。",
-            "本機的 super 只放得下一個槽位的系統，裝到另一個槽會覆蓋目前系統，recovery 也會失去可用的系統分割區。請在系統裡更新，或改用刷入分割區映像檔。",
-            "This phone's super keeps room for one slot's system at a time. An update written to the other slot would overwrite this one, leaving the recovery without the system it reads. Update from the system instead, or flash partition images.",
-        ])
-        .into(),
         Refusal::NoPartition => l.pick(["本机没有可刷入该镜像的分区。", "本機沒有可刷入這個映像檔的分割區。", "This phone has no partition this image can be flashed to."]).into(),
         Refusal::Battery { level, charging } => {
             let least = skyward_install::least_charge(*charging);

@@ -201,10 +201,6 @@ pub enum Refusal {
     /// the system asked for before that is not started, as Android's own
     /// recovery does not start one.
     Panicked,
-    /// Super keeps room for one slot's system at a time, so an update
-    /// written to the other slot would land on the partitions the installed
-    /// system this recovery reads is in.
-    RoomForOneSlot,
     /// Made for other devices: the ones it names.
     OtherDevice(String),
     /// Made for particular phones, not this one.
