@@ -7,9 +7,11 @@
 Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 
 <p align="center">
-  <img src="assets/home.png" width="30%" alt="首页">
-  <img src="assets/settings-dark.png" width="30%" alt="深色模式下的设置">
-  <img src="assets/time-zone.png" width="30%" alt="时区">
+  <img src="assets/thyme/home.png" width="19%" alt="首页">
+  <img src="assets/thyme/decrypted.png" width="19%" alt="data 分区已解密">
+  <img src="assets/thyme/install.png" width="19%" alt="安装">
+  <img src="assets/thyme/backup.png" width="19%" alt="备份">
+  <img src="assets/thyme/about.png" width="19%" alt="关于本机">
 </p>
 
 ## 功能
@@ -117,14 +119,6 @@ Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 | 🚧 REDMI K90 Ultra | `warsaw` | OS3.0.309.0.WHPCNXM（Android 16） |
 | 🚧 REDMI K100 Pro | `athens` | OS4.0.4.0.XPICNXM（Android 17） |
 | 🚧 REDMI K100 Pro Max | `songyuan` | OS4.0.4.0.XGNCNXM（Android 17） |
-
-<p align="center">
-  <img src="assets/thyme/home.png" width="19%" alt="首页">
-  <img src="assets/thyme/decrypted.png" width="19%" alt="data 分区已解密">
-  <img src="assets/thyme/install.png" width="19%" alt="安装">
-  <img src="assets/thyme/backup.png" width="19%" alt="备份">
-  <img src="assets/thyme/about.png" width="19%" alt="关于本机">
-</p>
 
 ## 安装 Skyward
 

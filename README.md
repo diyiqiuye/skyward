@@ -7,9 +7,11 @@ English | [简体中文](README.zh-CN.md)
 Skyward is a recovery written in Rust, from scratch.
 
 <p align="center">
-  <img src="assets/home.png" width="30%" alt="Home">
-  <img src="assets/settings-dark.png" width="30%" alt="Settings in dark mode">
-  <img src="assets/time-zone.png" width="30%" alt="Time zone">
+  <img src="assets/thyme/home.png" width="19%" alt="Home">
+  <img src="assets/thyme/decrypted.png" width="19%" alt="data decrypted">
+  <img src="assets/thyme/install.png" width="19%" alt="Install">
+  <img src="assets/thyme/backup.png" width="19%" alt="Backup">
+  <img src="assets/thyme/about.png" width="19%" alt="About">
 </p>
 
 ## Features
@@ -124,14 +126,6 @@ the data partition.
 | 🚧 REDMI K90 Ultra | `warsaw` | OS3.0.309.0.WHPCNXM (Android 16) |
 | 🚧 REDMI K100 Pro | `athens` | OS4.0.4.0.XPICNXM (Android 17) |
 | 🚧 REDMI K100 Pro Max | `songyuan` | OS4.0.4.0.XGNCNXM (Android 17) |
-
-<p align="center">
-  <img src="assets/thyme/home.png" width="19%" alt="Home">
-  <img src="assets/thyme/decrypted.png" width="19%" alt="data decrypted">
-  <img src="assets/thyme/install.png" width="19%" alt="Install">
-  <img src="assets/thyme/backup.png" width="19%" alt="Backup">
-  <img src="assets/thyme/about.png" width="19%" alt="About">
-</p>
 
 ## Installing Skyward
 
