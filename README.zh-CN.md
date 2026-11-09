@@ -119,10 +119,11 @@ Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 | 🚧 REDMI K100 Pro Max | `songyuan` | OS4.0.4.0.XGNCNXM（Android 17） |
 
 <p align="center">
-  <img src="assets/thyme/decrypted.png" width="24%" alt="data 分区已解密">
-  <img src="assets/thyme/install.png" width="24%" alt="安装">
-  <img src="assets/thyme/backup.png" width="24%" alt="备份">
-  <img src="assets/thyme/about.png" width="24%" alt="关于本机">
+  <img src="assets/thyme/home.png" width="19%" alt="首页">
+  <img src="assets/thyme/decrypted.png" width="19%" alt="data 分区已解密">
+  <img src="assets/thyme/install.png" width="19%" alt="安装">
+  <img src="assets/thyme/backup.png" width="19%" alt="备份">
+  <img src="assets/thyme/about.png" width="19%" alt="关于本机">
 </p>
 
 ## 安装 Skyward

@@ -126,10 +126,11 @@ the data partition.
 | 🚧 REDMI K100 Pro Max | `songyuan` | OS4.0.4.0.XGNCNXM (Android 17) |
 
 <p align="center">
-  <img src="assets/thyme/decrypted.png" width="24%" alt="data decrypted">
-  <img src="assets/thyme/install.png" width="24%" alt="Install">
-  <img src="assets/thyme/backup.png" width="24%" alt="Backup">
-  <img src="assets/thyme/about.png" width="24%" alt="About">
+  <img src="assets/thyme/home.png" width="19%" alt="Home">
+  <img src="assets/thyme/decrypted.png" width="19%" alt="data decrypted">
+  <img src="assets/thyme/install.png" width="19%" alt="Install">
+  <img src="assets/thyme/backup.png" width="19%" alt="Backup">
+  <img src="assets/thyme/about.png" width="19%" alt="About">
 </p>
 
 ## Installing Skyward
