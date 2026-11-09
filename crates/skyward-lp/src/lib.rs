@@ -242,6 +242,37 @@ pub fn read(super_dev: &Path, slot: u32) -> Result<Metadata> {
     Ok(metadata)
 }
 
+/// Read the metadata of a super partition whose beginning is in memory: the
+/// reserved area, then the geometry, then the metadata copies.
+pub fn read_bytes(data: &[u8], slot: u32) -> Result<Metadata> {
+    let at = |offset: u64, len: usize| -> Result<&[u8]> {
+        let start = offset as usize;
+        data.get(start..start + len)
+            .with_context(|| format!("no {len} bytes at {offset}"))
+    };
+    let mut damaged = Vec::new();
+    let geometry = match Geometry::parse(at(RESERVED_BYTES, GEOMETRY_SIZE as usize)?) {
+        Ok(g) => g,
+        Err(e) => {
+            damaged.push(format!("primary geometry: {e:#}"));
+            Geometry::parse(at(RESERVED_BYTES + GEOMETRY_SIZE, GEOMETRY_SIZE as usize)?)
+                .with_context(|| format!("both geometry copies are damaged; primary: {e:#}"))?
+        }
+    };
+    ensure!(slot < geometry.metadata_slot_count, "no metadata slot {slot}");
+    let size = geometry.metadata_max_size as usize;
+    let mut metadata = match parse_metadata(&geometry, at(geometry.primary_offset(slot), size)?, Some(slot)) {
+        Ok(m) => m,
+        Err(e) => {
+            damaged.push(format!("primary metadata for slot {slot}: {e:#}"));
+            parse_metadata(&geometry, at(geometry.backup_offset(slot), size)?, Some(slot))
+                .with_context(|| format!("both metadata copies for slot {slot} are damaged; primary: {e:#}"))?
+        }
+    };
+    metadata.damaged = damaged;
+    Ok(metadata)
+}
+
 /// Read metadata kept in a file of its own, as libfiemap keeps where its
 /// images lie on the data partition: the geometry, then a single copy of
 /// the metadata, its names taken as they are.
