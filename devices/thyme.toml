@@ -1,0 +1,184 @@
+[device]
+codename = "thyme"
+brand = "Xiaomi"
+model = "Xiaomi 10S"
+ab = true
+soc = { hans = "骁龙870", hant = "驍龍870", en = "Snapdragon 870" }
+# The MIUI build the vendor partition says it is; the phone's own recovery
+# ramdisk carries no ro.mi.os.* property at all.
+os_version_prop = "ro.vendor.build.version.incremental"
+
+[display]
+width = 1080
+height = 2340
+# odm/etc/build.prop: ro.sf.lcd_density=440, persist.miui.density_v2=440.
+# The density the vendor's own early-boot script would pick from the panel
+# width, 480, is overridden by the odm property the phone ships with.
+density = 440
+diagonal = 6.67
+# The panel's corners are round, but the phone keeps their radius in its own
+# overlay, which a recovery does not read: left square until a phone says.
+corner_radius = 0
+
+[modules]
+# thyme keeps every module in one folder, /vendor/lib/modules, which its
+# vendor_boot ramdisk does not carry a copy of and it has no vendor_dlkm.
+sources = ["vendor"]
+# The touchscreen is not a module here: Goodix's gt9886 driver and Xiaomi's
+# touch layer above it are built into the kernel in the boot image.
+#
+# The WLAN driver is, though, and the phone's own init loads it as the
+# system starts rather than when the radio is first wanted: the platform
+# driver it registers with powers the chip as it does so, and the window
+# for that is gone by the time a page is opened.
+load = []
+
+[firmware]
+# The WLAN chip's firmware and the apps the secure world runs are on the
+# modem partition, which the phone mounts at /vendor/firmware_mnt.
+partition = "modem"
+
+[partitions]
+# The secure world keeps its own files here, through the listener qseecomd
+# registers: the phone mounts it at /mnt/vendor/persist and its own recovery
+# leaves it unmounted.
+mounted = ["persist"]
+
+# The nodes the phone's own ueventd hands to the accounts that open them,
+# which the recovery's ueventd does not read: qseecomd opens /dev/qseecom,
+# and the secure world's listeners take /dev/ion. Both are the phone's own
+# lines, in /vendor/ueventd.rc and in the recovery's miui.factoryreset.rc.
+[[owners]]
+user = "system"
+group = "drmrpc"
+mode = 0o660
+paths = ["/dev/qseecom"]
+
+[[owners]]
+user = "system"
+group = "system"
+mode = 0o664
+paths = ["/dev/ion"]
+
+# Each program below runs as the user, in the groups and with the
+# capabilities the phone's own init script gives it.
+
+# The secure world reaches back into Android through the listeners this
+# daemon registers; it sets vendor.sys.listeners.registered once they are up.
+[[service]]
+path = "/vendor/bin/qseecomd"
+libraries = ["/system/lib64", "/vendor/lib64"]
+ready_property = "vendor.sys.listeners.registered"
+user = "root"
+groups = ["root", "drmrpc"]
+
+# The directory of the phone's own software services. This recovery carries
+# no libbinder of its own, so it cannot offer one; the installed system's
+# own is used instead, in a place where the installed system's own files
+# are where that directory looks for them. It answers the calls the
+# recovery's own programs make, and the installed system's services
+# register with it as they do when the phone runs.
+[[service]]
+path = "/mnt/system/system/bin/servicemanager"
+installed = true
+libraries = ["/mnt/system/system/lib64", "/mnt/system/system/lib64/bootstrap", "/vendor/lib64", "/vendor/lib64/hw"]
+user = "root"
+groups = ["root"]
+
+# The directory of the phone's hardware services, which is of the
+# installed system's build, and is run through that system's loader, in
+# a place where the files it names are that system's own: the recovery's
+# are of an older build and would not hold it up.
+[[service]]
+path = "/mnt/system/system/bin/hwservicemanager"
+installed = true
+libraries = ["/mnt/system/system/lib64", "/mnt/system/system/lib64/bootstrap", "/vendor/lib64"]
+ready_property = "hwservicemanager.ready"
+user = "system"
+groups = ["system", "readproc"]
+
+# The key service of the older kind, which the phone's own system opens
+# the data partition's key with.
+[[service]]
+path = "/vendor/bin/hw/android.hardware.keymaster@4.0-service-qti"
+installed = true
+libraries = ["/mnt/system/system/lib64", "/mnt/system/system/lib64/bootstrap", "/vendor/lib64", "/vendor/lib64/hw"]
+ready_hardware_service = "android.hardware.keymaster@4.0::IKeymasterDevice/default"
+user = "system"
+groups = ["system"]
+
+# The key service of the newer kind. This phone has no service of that
+# kind of its own: the installed system's own key store offers one, which
+# it builds on the service of the older kind above, and which holds the
+# key blobs in the form the phone's own system wrote them.
+#
+# The store keeps its own records where it is told to, and the data
+# partition is of no use to a recovery, so they are kept in the recovery's
+# own place for what it holds only while it runs.
+[[service]]
+path = "/mnt/system/system/bin/keystore2"
+args = ["/tmp/keystore2"]
+installed = true
+libraries = ["/system/lib64", "/system/lib64/bootstrap", "/vendor/lib64", "/vendor/lib64/hw"]
+ready_service = "android.system.keystore2.IKeystoreService/default"
+user = "system"
+groups = ["system"]
+
+# WLAN: Qualcomm's QCA6390 (ro.hardware.wlan.chip=639x) on PCIe, driven by
+# qca_cld3_qca6390 over the cnss2 platform driver. Once fs_ready is written,
+# cnss2 powers the chip up and loads its firmware from the modem partition,
+# and wlan0 appears. wpa_supplicant runs on the recovery's own libraries
+# before the vendor partition's; whether a joined network reaches the
+# internet is asked of the page the Chinese system's NetworkStack names.
+[wlan]
+modules = ["qca_cld3_qca6390"]
+writes = [{ path = "/sys/kernel/cnss/fs_ready", value = "1" }]
+# The driver asks the kernel's firmware loader for these two, and the
+# installed system keeps them apart: its own settings for the chip are on
+# the vendor partition, and the address the chip answers to is on persist,
+# which the phone's recovery leaves unmounted.
+firmware = [
+    { name = "wlan/qca_cld/qca6390/WCNSS_qcom_cfg.ini", path = "/vendor/etc/wifi/qca6390/WCNSS_qcom_cfg.ini" },
+    { name = "wlan/qca_cld/qca6390/wlan_mac.bin", partition = "persist", path = "wlan_mac.bin" },
+]
+interface = "wlan0"
+supplicant = "/vendor/bin/hw/wpa_supplicant"
+# The supplicant is built against the installed system's own libraries: the
+# vendor interface's bundle, which Skyward opens, holds the ones it asks for
+# by the wifi supplicant's name, and the system's platform folder the rest.
+libraries = ["/mnt/system/system/lib64", "/mnt/system/system/lib64/bootstrap", "/vendor/lib64", "/vendor/lib64/hw"]
+service = "android.hardware.wifi.supplicant.ISupplicant/default"
+probe = "http://connect.rom.miui.com/generate_204"
+
+# The partitions a backup of the baseband and EFS takes: the baseband's
+# settings, with the IMEI, and the sensors' calibration. And what of the data
+# partition a backup leaves out because the secure world keeps it in step
+# with itself: its own storage and the fingerprint templates, which on thyme
+# are Goodix's, in the folders the vendor's init scripts make.
+[backup]
+efs = ["modemst1", "modemst2", "fsg", "fsc", "persist"]
+data_skipped = [
+    "vendor/tzstorage",
+    "vendor/qtee",
+    "vendor/tui",
+    "vendor/mitee",
+    "vendor/goodix",
+    "vendor/fpc",
+    "vendor/fpdump",
+    "vendor/misc/qti_fp",
+    "vendor/secure_element",
+]
+
+# Where the phone's own programs keep logs in the data partition.
+[wipe]
+logs = [
+    "/data/miuilog",
+    "/data/vendor/diag",
+    "/data/vendor/log",
+    "/data/vendor/ramdump",
+    "/data/vendor/ramdump_ssr",
+    "/data/vendor/ssrdump",
+    "/data/vendor/tombstones",
+    "/data/vendor/wlan_logs",
+    "/data/vendor/sensor_log",
+]
