@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::mem::size_of;
-use std::os::unix::fs::FileExt;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use zerocopy::byteorder::little_endian::{U16, U32, U64};
 use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout, Unaligned};
@@ -209,7 +209,7 @@ pub fn read(super_dev: &Path, slot: u32) -> Result<Metadata> {
     let file = File::open(super_dev).with_context(|| format!("open {}", super_dev.display()))?;
     let at = |offset: u64, len: usize| -> Result<Vec<u8>> {
         let mut buf = vec![0u8; len];
-        file.read_exact_at(&mut buf, offset)
+        read_at(&file, &mut buf, offset)
             .with_context(|| format!("read {len} bytes at {offset} in {}", super_dev.display()))?;
         Ok(buf)
     };
@@ -462,4 +462,11 @@ fn parse_metadata(geometry: &Geometry, buf: &[u8], slot: Option<u32>) -> Result<
         block_devices,
         damaged: Vec::new(),
     })
+}
+
+/// Read `buf` from `offset`, the same on every host.
+fn read_at(file: &File, buf: &mut [u8], offset: u64) -> std::io::Result<()> {
+    let mut copy = file.try_clone()?;
+    copy.seek(SeekFrom::Start(offset))?;
+    copy.read_exact(buf)
 }

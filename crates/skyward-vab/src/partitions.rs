@@ -389,6 +389,16 @@ pub fn mounted_partitions(slot: Slot) -> Result<Vec<Mounted>> {
     Ok(found.into_iter().map(|(_, m)| m).collect())
 }
 
+/// Whether super keeps room for one slot's system at a time: the other
+/// slot's partitions are named in the metadata this slot's is read from, but
+/// none of them has any room laid out. An update written to that slot then
+/// lands on the space this slot's own partitions take.
+pub fn room_for_one_slot(slot: Slot) -> Result<bool> {
+    let md = skyward_lp::read(&super_device(), slot.number())?;
+    let other = slot.other().suffix();
+    Ok(md.partitions.iter().filter(|p| p.name.ends_with(other)).all(|p| p.extents.is_empty()))
+}
+
 /// Take the slot's mounted partitions away before an update writes over
 /// them: unmount them and remove their device-mapper devices. A partition
 /// whose mount point is in `busy` still has files in use; it only leaves

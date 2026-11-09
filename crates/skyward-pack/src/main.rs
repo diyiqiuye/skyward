@@ -58,6 +58,11 @@ enum Cmd {
         /// The device configuration, devices/<codename>.toml.
         #[arg(long)]
         config: PathBuf,
+        /// The partition the image is written to, which the footer names:
+        /// recovery, on phones that have one, and boot on the phones that
+        /// keep the recovery in the boot image.
+        #[arg(long, default_value = "recovery")]
+        partition: String,
         /// The UI typeface.
         #[arg(long)]
         font: PathBuf,
@@ -105,7 +110,7 @@ fn main() -> Result<()> {
             img.kernel = BootImage::read(&kernel)?.kernel;
             write(&out, &img, &img.to_bytes()?)
         }
-        Cmd::Recovery { stock, binary, system_init, config, font, mono, mono_license, out } => {
+        Cmd::Recovery { stock, binary, system_init, config, partition, font, mono, mono_license, out } => {
             let size = partition_size(&stock)?;
             let mut img = BootImage::read(&stock)?;
             let mut rd = Ramdisk::decode(&img.ramdisk)?;
@@ -150,7 +155,7 @@ fn main() -> Result<()> {
             rd.replace(paths::PROP_DEFAULT, props)?;
             img.ramdisk = rd.encode()?;
             let bytes = img.to_bytes()?;
-            write(&out, &img, &avb::footed(&bytes, "recovery", size, &Sha256::digest(&bytes))?)
+            write(&out, &img, &avb::footed(&bytes, &partition, size, &Sha256::digest(&bytes))?)
         }
         Cmd::Stock { config, out } => {
             let stock = skyward_config::DeviceConfig::load(&config)?.stock.with_context(|| format!("{} names no stock build", config.display()))?;
