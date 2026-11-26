@@ -706,7 +706,7 @@ enum Line {
 fn apply<S>(ctx: &Context, mount: &Mount<S>, update: &Update) -> Result<i32> {
     let (status_read, status_write) = pipe(0)?;
     let status_fd = status_write.as_raw_fd();
-    let mut command = std::process::Command::new(ota::PROGRAM);
+    let mut command = std::process::Command::new(ota::program());
     command
         .args(ota::arguments(fuse::PACKAGE, update, status_fd))
         .stdin(Stdio::null())
@@ -721,7 +721,7 @@ fn apply<S>(ctx: &Context, mount: &Mount<S>, update: &Update) -> Result<i32> {
             Ok(())
         });
     }
-    let mut child = command.spawn().with_context(|| format!("start {}", ota::PROGRAM))?;
+    let mut child = command.spawn().with_context(|| format!("start {}", ota::program()))?;
     drop(status_write);
     let stderr = child.stderr.take().expect("stderr is piped");
     let mut log = File::create(ENGINE_LOG).with_context(|| format!("create {ENGINE_LOG}"))?;

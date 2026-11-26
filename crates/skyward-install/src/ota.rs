@@ -3,8 +3,21 @@
 
 use crate::package::Update;
 
-/// Where the recovery ramdisk keeps it.
-pub const PROGRAM: &str = "/system/bin/update_engine_sideload";
+/// Where the recovery ramdisk keeps the engine this recovery ships with,
+/// and the installed system's own as a fallback.
+pub const BUNDLED_PROGRAM: &str = "/skyward/update_engine_sideload";
+pub const SYSTEM_PROGRAM: &str = "/system/bin/update_engine_sideload";
+
+/// The engine to run: one bundled beside Skyward first, so a newer or
+/// patched engine can read custom ROMs whose signatures the installed
+/// system's engine does not know, and the system's own otherwise.
+pub fn program() -> &'static str {
+    if std::path::Path::new(BUNDLED_PROGRAM).exists() {
+        BUNDLED_PROGRAM
+    } else {
+        SYSTEM_PROGRAM
+    }
+}
 
 /// Its arguments for `update`, read from the file `package`; it writes
 /// its status lines to `status_fd`.

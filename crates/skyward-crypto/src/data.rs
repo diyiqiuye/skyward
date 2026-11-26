@@ -209,11 +209,16 @@ pub fn open_without_credential(service: &Keys) -> Result<Opening> {
     let mut closed = Vec::new();
     let mut owner = Note::default();
     for user in open_users(service)? {
-        // A phone that has set up no secret for a user keeps no blob to
-        // open their own files behind, and there is nothing to open: their
-        // files stay as they are rather than the reading of the rest of
-        // the partition being turned down for them.
+        // A user who set no screen lock may have no synthetic-password
+        // blob at all. Their key is still in vold's own key directory,
+        // bound to no password; open it directly so their files, and the
+        // owner's shared storage at /sdcard, show without a credential.
         if !blobs(user).is_dir() {
+            if let Keys::Newer(newer) = service {
+                // Best effort: one user's unreadable key must not keep
+                // the rest of the data partition closed.
+                let _ = open_user_files_without_protector(newer, user);
+            }
             continue;
         }
         let protector = protector(user)?;
@@ -541,7 +546,12 @@ fn open_user_files(service: &KeyMint, user: u32, credential: Option<&[u8]>, owne
     let wrapped = crate::fscrypt::hardware_wrapped(mode.trim());
     let dir = Path::new(USER_KEYS).join("ce").join(user.to_string()).join("current");
     let stored = StoredKey::load(&dir).with_context(|| format!("read the key in {}", dir.display()))?;
-    let raw = stored.unwrap(Unwrap::<KeyMint>::Secret(&file_secret)).with_context(|| format!("unwrap the key in {}", dir.display()))?;
+    let raw = match stored.blob() {
+        // A user who set no screen lock keeps the key in the secure world,
+        // bound to no password; the key service opens it without a secret.
+        Some(_) => stored.unwrap(Unwrap::Hardware(service)).with_context(|| format!("unwrap the key in {}", dir.display()))?,
+        None => stored.unwrap(Unwrap::<KeyMint>::Secret(&file_secret)).with_context(|| format!("unwrap the key in {}", dir.display()))?,
+    };
     let raw = match wrapped {
         true => service.ephemeral_storage_key(&raw).with_context(|| format!("make the key in {} usable now", dir.display()))?,
         false => raw,
@@ -551,6 +561,36 @@ fn open_user_files(service: &KeyMint, user: u32, credential: Option<&[u8]>, owne
         show_owner_storage()?;
     }
     secret_note(user, &synthetic_password)
+}
+
+/// Let in a user's own key where the phone kept no synthetic-password
+/// blob: a user who set no screen lock keeps the key in the secure world,
+/// bound to no password, and `nopassword` is what vold wrote beside it.
+fn open_user_files_without_protector(service: &KeyMint, user: u32) -> Result<()> {
+    let dir = Path::new(USER_KEYS).join("ce").join(user.to_string()).join("current");
+    let stored = StoredKey::load(&dir).with_context(|| format!("read the key in {}", dir.display()))?;
+    let raw = match stored.blob() {
+        // The key is wrapped by the secure world; nothing the user knows
+        // is needed to open it.
+        Some(_) => stored.unwrap(Unwrap::Hardware(service)).with_context(|| format!("unwrap the key in {}", dir.display()))?,
+        // A key wrapped in software with the no-credential secret, for a
+        // phone that writes no key blob.
+        None => {
+            let secret = crate::user::file_secret(&crate::user::stretched_without_credential());
+            stored.unwrap(Unwrap::<KeyMint>::Secret(&secret)).with_context(|| format!("unwrap the key in {}", dir.display()))?
+        }
+    };
+    let mode = std::fs::read_to_string(FILE_MODE).with_context(|| format!("read {FILE_MODE}"))?;
+    let wrapped = crate::fscrypt::hardware_wrapped(mode.trim());
+    let raw = match wrapped {
+        true => service.ephemeral_storage_key(&raw).with_context(|| format!("make the key in {} usable now", dir.display()))?,
+        false => raw,
+    };
+    crate::fscrypt::add_key(Path::new(MOUNT), &raw, wrapped)?;
+    if user == OWNER {
+        show_owner_storage()?;
+    }
+    Ok(())
 }
 
 /// What the secure world wrote for a user's own secret, which is what the

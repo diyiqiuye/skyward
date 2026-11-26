@@ -832,6 +832,9 @@ fn prepare(cfg: &DeviceConfig, slot: skyward_vab::Slot) -> Result<()> {
             for d in &mounts.damaged {
                 skyward_sys::kmsg(&format!("super: {d}"))?;
             }
+            for f in &mounts.failed {
+                skyward_sys::kmsg(&format!("partition not mounted: {f}"))?;
+            }
             for m in &mounts.partitions {
                 skyward_sys::kmsg(&format!("mounted {} on {} ({})", m.partition, m.mount_point.display(), m.filesystem))?;
             }
@@ -841,7 +844,15 @@ fn prepare(cfg: &DeviceConfig, slot: skyward_vab::Slot) -> Result<()> {
                 skyward_sys::kmsg(&format!("devices not brought up: {e:#}"))?;
             }
         }
-        Err(e) => skyward_sys::kmsg(&format!("partitions not mounted: {e:#}"))?,
+        Err(e) => {
+            skyward_sys::kmsg(&format!("partitions not mounted: {e:#}"))?;
+            // What mounted before the failure can still be enough for the
+            // key service and /sdcard to come up, and for a wipe to be
+            // offered when the data partition cannot be decrypted.
+            if let Err(e) = bring_up(cfg, slot) {
+                skyward_sys::kmsg(&format!("devices not brought up: {e:#}"))?;
+            }
+        }
     }
     Ok(())
 }

@@ -21,6 +21,9 @@ pub struct Mounts {
     pub partitions: Vec<Mounted>,
     /// Damaged metadata copies in super that their backups stood in for.
     pub damaged: Vec<String>,
+    /// Partitions that could not be mapped or mounted; the rest still
+    /// came up, so the recovery can keep going without them.
+    pub failed: Vec<String>,
 }
 
 /// Where a logical partition goes in recovery. System goes to /mnt/system,
@@ -126,17 +129,25 @@ pub fn mount_partitions(slot: Slot) -> Result<Mounts> {
     };
 
     let shown = mounted_partitions(slot)?;
-    let mut mounts = Mounts { partitions: Vec::new(), damaged: md.damaged.clone() };
+    let mut mounts = Mounts { partitions: Vec::new(), damaged: md.damaged.clone(), failed: Vec::new() };
     for p in slot_partitions(&md, slot) {
         if let Some(m) = shown.iter().find(|m| m.partition == p.name) {
             mounts.partitions.push(m.clone());
             continue;
         }
-        let mounted = match through.map(|s| Ok::<_, anyhow::Error>((s, s.live(p)?))).transpose()? {
-            Some((s, Some(status))) => mount_snapshot(s, &md, &devices, p, &status, slot)?,
-            _ => map_and_mount(p, &devices, slot)?,
-        };
-        mounts.partitions.push(mounted);
+        let mounted = (|| -> Result<Mounted> {
+            match through.map(|s| Ok::<_, anyhow::Error>((s, s.live(p)?))).transpose()? {
+                Some((s, Some(status))) => mount_snapshot(s, &md, &devices, p, &status, slot),
+                _ => map_and_mount(p, &devices, slot),
+            }
+        })();
+        match mounted {
+            Ok(mounted) => mounts.partitions.push(mounted),
+            // One damaged partition, often odm, must not keep the
+            // system and vendor from coming up and the key service from
+            // starting; the recovery can still offer a wipe.
+            Err(e) => mounts.failed.push(format!("{}: {e:#}", p.name)),
+        }
     }
     Ok(mounts)
 }
