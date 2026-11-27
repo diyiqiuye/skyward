@@ -19,6 +19,11 @@ runs:
       with:
         ndk-version: r29
         add-to-path: false
+    # The ramdisk tests pack the way the stock archive was packed, with the
+    # reference lz4 tool, and say so plainly where it is not there.
+    - name: Install the reference lz4 tool
+      shell: bash
+      run: sudo apt-get update -qq && sudo apt-get install -y lz4
     - name: Point cargo-ndk at that NDK
       shell: bash
       env:
