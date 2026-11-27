@@ -354,7 +354,7 @@ mod tests {
 
     #[test]
     fn round_trip_keeps_metadata() {
-        let mut rd = Ramdisk { entries: Vec::new() };
+        let mut rd = Ramdisk { entries: Vec::new(), compression: Compression::Gzip };
         rd.add("system/bin/recovery", 0o750, b"binary".to_vec()).unwrap();
         rd.entries.push(Entry {
             name: "dev/console".into(),
@@ -403,9 +403,9 @@ mod tests {
 
     #[test]
     fn a_stream_after_the_vendor_ramdisk_is_read_on_into() {
-        let mut vendor = Ramdisk { entries: Vec::new() };
+        let mut vendor = Ramdisk { entries: Vec::new(), compression: Compression::Lz4 };
         vendor.add("lib/modules/ufs_qcom.ko", 0o644, b"module".to_vec()).unwrap();
-        let mut ours = Ramdisk { entries: Vec::new() };
+        let mut ours = Ramdisk { entries: Vec::new(), compression: Compression::Lz4 };
         ours.add("init", 0o750, b"program".to_vec()).unwrap();
         let joined = [vendor.encode().unwrap(), lz4_legacy(&ours.archive().unwrap())].concat();
         assert_eq!(unpacked_by_the_tool(&joined), [vendor.archive().unwrap(), ours.archive().unwrap()].concat(), "both archives, one after the other");
@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn a_link_is_kept_as_a_link_to_its_target() {
-        let mut rd = Ramdisk { entries: Vec::new() };
+        let mut rd = Ramdisk { entries: Vec::new(), compression: Compression::Gzip };
         rd.add("system/bin/recovery", 0o750, b"binary".to_vec()).unwrap();
         rd.link("system/bin/zstd", "recovery").unwrap();
         rd.link("sbin/sh", "/system/bin/sh").unwrap();
@@ -445,6 +445,7 @@ mod tests {
         fs::write(root.join("etc"), b"a file").unwrap();
         std::os::unix::fs::symlink("nowhere", root.join("bin")).unwrap();
         let rd = Ramdisk {
+            compression: Compression::Gzip,
             entries: vec![
                 mine("init", S_IFLNK | 0o750, b"/system/bin/init"),
                 mine("dev", S_IFDIR | 0o755, b""),
@@ -480,14 +481,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("lib")).unwrap();
         fs::write(dir.path().join("lib/modules.load"), b"").unwrap();
-        let rd = Ramdisk { entries: vec![mine("lib", S_IFREG | 0o644, b"a file")] };
+        let rd = Ramdisk { entries: vec![mine("lib", S_IFREG | 0o644, b"a file")], compression: Compression::Gzip };
         assert!(rd.unpack(dir.path()).is_err());
         assert!(dir.path().join("lib/modules.load").exists());
     }
 
     #[test]
     fn a_link_already_there_is_pointed_anew_keeping_the_rest_of_its_entry() {
-        let mut rd = Ramdisk { entries: Vec::new() };
+        let mut rd = Ramdisk { entries: Vec::new(), compression: Compression::Gzip };
         rd.add("system/bin/ziptool", 0o755, b"binary".to_vec()).unwrap();
         rd.entries.push(Entry {
             name: "system/bin/unzip".into(),
