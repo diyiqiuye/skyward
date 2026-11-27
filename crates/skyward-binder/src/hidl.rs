@@ -82,7 +82,7 @@ impl Message {
         let at = self.keep(body.to_vec());
         let mut frame = Vec::with_capacity(FRAME_BYTES);
         frame.extend_from_slice(&at.to_le_bytes());
-        frame.extend_from_slice(&(count as u32).to_le_bytes());
+        frame.extend_from_slice(&count.to_le_bytes());
         frame.extend_from_slice(&[0; 4]);
         let frame_at = self.keep(frame);
         let frame_index = self.address(frame_at, FRAME_BYTES, None);
@@ -140,7 +140,7 @@ impl Message {
     fn framed(&mut self, at: u64, count: usize, length: usize) -> usize {
         let mut frame = Vec::with_capacity(FRAME_BYTES);
         frame.extend_from_slice(&at.to_le_bytes());
-        frame.extend_from_slice(&(count as u32).to_le_bytes());
+        frame.extend_from_slice(&count.to_le_bytes());
         // Whoever reads the frame does not free what it points at.
         frame.extend_from_slice(&[0; 4]);
         let frame_at = self.keep(frame);
