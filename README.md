@@ -17,22 +17,31 @@ Skyward is a recovery written in Rust, from scratch.
 ## Supported devices
 
 > This is a fork of [kirklin/skyward](https://github.com/kirklin/skyward) that adds the Xiaomi 10S
-> (`thyme`, Android 13). Upstream supports Android 16 and 17; Android 13 has no AIDL KeyMint of its
-> own, so both reaching the key service and letting go of the installed system's partitions differ.
+> (`thyme`, Android 13) and the Redmi K40 (`alioth`, Android 13). Upstream supports Android 16 and
+> 17; Android 13 has no AIDL KeyMint of its own, so both reaching the key service and letting go of
+> the installed system's partitions differ.
 
 | Device | Codename | Tested system version |
 | --- | --- | --- |
 | Xiaomi 10S (**this fork**) | `thyme` | OS1.0.4.0.TGACNXM (Android 13) |
+| Redmi K40 (**this fork**) | `alioth` | OS1.0.10.0.TKHCNXM (Android 13) |
 
-The Xiaomi 10S (`thyme`) has no recovery partition of its own: the image goes into the
-running slot's boot partition, whose system boot image it replaces.
+The Xiaomi 10S (`thyme`) and the Redmi K40 (`alioth`) have no recovery partition of their own: the
+image goes into the running slot's boot partition, whose system boot image it replaces.
 
 ```sh
 unzip skyward-v0.2.0-thyme-OS1.0.4.0.TGACNXM.zip
 fastboot flash boot_a skyward-v0.2.0-thyme-OS1.0.4.0.TGACNXM.img
 fastboot reboot recovery
-adb in Skyward is a root shell that needs no authorization on the phone: anyone
-with the phone and a cable can reach its storage while it is in recovery.
+```
+
+The Redmi K40 is flashed the same way. Its stock boot image, which the device configuration names
+and checks against its SHA-256, is taken out of the full update package by the packer itself:
+`[stock]` names `boot` as the partition the recovery is made on, where other phones name
+`recovery`.
+
+> adb in Skyward is a root shell that needs no authorization on the phone: anyone
+> with the phone and a cable can reach its storage while it is in recovery.
 
 Building
 Skyward builds with the stable Rust that rust-toolchain.toml names, with its
