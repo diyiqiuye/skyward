@@ -203,8 +203,8 @@ fn parses_alioth() {
             },
             Firmware {
                 name: "wlan/qca_cld/qca6390/wlan_mac.bin".into(),
-                path: "wlan/wlan_mac.bin".into(),
-                partition: Some("persist".into()),
+                path: "/mnt/vendor/persist/wlan/wlan_mac.bin".into(),
+                partition: None,
             },
         ],
         "the driver asks for both by name, and its own vendor tree answers with links a recovery cannot follow"
