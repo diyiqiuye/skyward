@@ -176,6 +176,7 @@ fn parses_alioth() {
             "/vendor/bin/hw/android.hardware.keymaster@4.0-service-qti",
             "/mnt/system/system/bin/keystore2",
             "/vendor/bin/hw/android.hardware.gatekeeper@1.0-service-qti",
+            "/vendor/bin/hw/android.hardware.boot@1.1-service",
         ]
     );
     assert_eq!(cfg.services[0].groups, ["root"], "its own init runs qseecomd as root alone");
@@ -187,6 +188,13 @@ fn parses_alioth() {
     );
     let gatekeeper = &cfg.services[5];
     assert_eq!(gatekeeper.ready_hardware_service.as_deref(), Some("android.hardware.gatekeeper@1.0::IGatekeeper/default"));
+    let boot = &cfg.services[6];
+    assert_eq!(
+        boot.ready_hardware_service.as_deref(),
+        Some("android.hardware.boot@1.1::IBootControl/default"),
+        "its vendor partition ships no 1.2 service, and the 1.1 one is what has the slots"
+    );
+    assert_eq!(boot.groups, ["root"], "its own init runs the boot control as root alone");
     assert!(
         cfg.services[4].ready_service.is_some(),
         "the credential service is written after the key store, which a phone without it still has"
