@@ -275,3 +275,5 @@ fn a_partition_mounted_as_the_phone_mounts_it_is_named_plainly() {
     assert!(with("").is_err());
     assert!(DeviceConfig::parse("[device]\ncodename = \"x\"\n").unwrap().partitions.mounted.is_empty(), "a phone may need none");
 }
+
+mod devices;
