@@ -38,13 +38,14 @@ enum Cmd {
         #[arg(long)]
         out: PathBuf,
     },
-    /// Build a Skyward recovery image on top of the device's stock recovery:
+    /// Build a Skyward recovery image on top of the device's stock image:
     /// its init, adbd, SELinux policy and libraries stay, the recovery
     /// service becomes Skyward. The image fills the whole partition and ends
     /// in an unsigned AVB footer of its own.
     Recovery {
-        /// The device's stock recovery image: the whole partition, as the
-        /// phone or a full update package holds it, ending in its AVB footer.
+        /// The device's stock image of the partition the recovery is made
+        /// on: the whole partition, as the phone or a full update package
+        /// holds it, ending in its AVB footer.
         #[arg(long)]
         stock: PathBuf,
         /// Skyward built for the device (aarch64-linux-android).
@@ -159,28 +160,28 @@ fn main() -> Result<()> {
         }
         Cmd::Stock { config, out } => {
             let stock = skyward_config::DeviceConfig::load(&config)?.stock.with_context(|| format!("{} names no stock build", config.display()))?;
-            println!("version={}\npackage={}\nrecovery={}", stock.version, stock.package, stock.recovery);
+            println!("version={}\npackage={}\npartition={}\nrecovery={}", stock.version, stock.package, stock.partition, stock.recovery);
             match out {
-                Some(out) => take_stock_recovery(&stock, &out),
+                Some(out) => take_stock_image(&stock, &out),
                 None => Ok(()),
             }
         }
     }
 }
 
-/// The partition a recovery is made on, as a full update package names it.
-const RECOVERY: &str = "recovery";
-
-/// Take the recovery partition out of the stock build's full update package
-/// on its server, reading only what that partition takes of it, and write it
-/// to `out` once its SHA-256 is the one the configuration names.
-fn take_stock_recovery(stock: &skyward_config::Stock, out: &Path) -> Result<()> {
+/// Take the partition the recovery is made on out of the stock build's full
+/// update package on its server, reading only what that partition takes of
+/// it, and write it to `out` once its SHA-256 is the one the configuration
+/// names. It is `recovery` on the phones that have one, and `boot` on the
+/// phones that keep their recovery in the boot image.
+fn take_stock_image(stock: &skyward_config::Stock, out: &Path) -> Result<()> {
+    let partition = stock.partition.as_str();
     let parent = out.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     std::fs::create_dir_all(parent).with_context(|| format!("make {}", parent.display()))?;
     // Taken out beside where it goes, so it is moved there whole.
     let work = tempfile::Builder::new().prefix(".stock").tempdir_in(parent).with_context(|| format!("make a folder in {}", parent.display()))?;
     let payload = unpayload::Payload::open_url(&stock.package).with_context(|| format!("open {}", stock.package))?;
-    let options = unpayload::ExtractOptions { output_dir: work.path().to_path_buf(), partitions: vec![RECOVERY.into()], ..Default::default() };
+    let options = unpayload::ExtractOptions { output_dir: work.path().to_path_buf(), partitions: vec![partition.into()], ..Default::default() };
     let report = |event: unpayload::Event<'_>| match event {
         unpayload::Event::Started { partitions } => {
             for (name, bytes) in partitions {
@@ -190,10 +191,10 @@ fn take_stock_recovery(stock: &skyward_config::Stock, out: &Path) -> Result<()> 
         unpayload::Event::Extracted(image) => println!("took {} out: {} bytes", image.partition, image.size),
         unpayload::Event::Progress { .. } => {}
     };
-    let taken = payload.extract(&options, &report).with_context(|| format!("take {RECOVERY} out of {}", stock.package))?;
-    let image = taken.iter().find(|i| i.partition == RECOVERY).with_context(|| format!("{} holds no {RECOVERY} partition", stock.package))?;
+    let taken = payload.extract(&options, &report).with_context(|| format!("take {partition} out of {}", stock.package))?;
+    let image = taken.iter().find(|i| i.partition == partition).with_context(|| format!("{} holds no {partition} partition", stock.package))?;
     let sum: String = image.sha256.as_deref().context("the package's own sum of the image was not checked")?.iter().map(|b| format!("{b:02x}")).collect();
-    ensure!(sum == stock.recovery, "the {RECOVERY} partition in {} has the SHA-256 {sum}, where the configuration names {}", stock.package, stock.recovery);
+    ensure!(sum == stock.recovery, "the {partition} partition in {} has the SHA-256 {sum}, where the configuration names {}", stock.package, stock.recovery);
     std::fs::rename(&image.path, out).with_context(|| format!("move {} to {}", image.path.display(), out.display()))?;
     println!("wrote {} ({} bytes), its SHA-256 the one the configuration names", out.display(), image.size);
     Ok(())

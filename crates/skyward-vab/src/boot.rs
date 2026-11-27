@@ -28,6 +28,12 @@ const FIRST: &str = "android.hardware.boot@1.0::IBootControl";
 const MERGE: &str = "android.hardware.boot@1.1::IBootControl";
 const INSTANCE: &str = "default";
 
+/// The versions of the older kind a phone may offer, newest first: one
+/// that ships the newer version is not the only one whose boot control a
+/// recovery may be asked to read, and which of them a phone was built
+/// with is something only the phone says.
+const HARDWARE_SERVICES: [&str; 3] = [HARDWARE_SERVICE, MERGE, FIRST];
+
 /// The methods, numbered as the newer kind numbers them.
 const GET_ACTIVE: u32 = 1;
 const GET_MERGE_STATUS: u32 = 4;
@@ -52,7 +58,10 @@ const YES: i32 = 1;
 /// The phone's boot control, as this program talks to it.
 pub enum BootControl<'a> {
     Newer(Handle<'a>),
-    Older(Handle<'a>),
+    /// The older kind, with the name of the version it was reached by:
+    /// every call of it carries that name, and a service refuses one that
+    /// names a version it does not serve.
+    Older(Handle<'a>, &'static str),
 }
 
 /// The slot the bootloader starts next, as the running boot control tells
@@ -94,22 +103,54 @@ fn older<T>(
 impl<'a> BootControl<'a> {
     /// Reach the running boot control: the newer kind through `binder`
     /// where the phone describes one, the older kind through `hardware`
-    /// otherwise. Say so where it is not running.
+    /// otherwise, by whichever of its versions the phone serves. Say so
+    /// where it is not running.
     pub fn open(binder: &'a Binder, hardware: &'a Binder) -> Result<BootControl<'a>> {
-        let not_running = |name: &str| format!("{name} is not running; the phone's boot control has to be started first");
         if service::declared(binder, SERVICE)? {
-            let control = service::find(binder, SERVICE)?.with_context(|| not_running(SERVICE))?;
+            let not_running = format!("{SERVICE} is not running; the phone's boot control has to be started first");
+            let control = service::find(binder, SERVICE)?.with_context(|| not_running)?;
             return Ok(BootControl::Newer(control));
         }
-        let control = hidl::find(hardware, HARDWARE_SERVICE, INSTANCE)?.with_context(|| not_running(HARDWARE_SERVICE))?;
-        Ok(BootControl::Older(control))
+        let mut looked_up = None;
+        for version in HARDWARE_SERVICES {
+            match hidl::find(hardware, version, INSTANCE) {
+                Ok(Some(control)) => return Ok(BootControl::Older(control, version)),
+                Ok(None) => {}
+                // A directory that cannot be asked at all answers for every
+                // version alike, so that is what is said, if nothing else is.
+                Err(e) => looked_up = Some(e),
+            }
+        }
+        if let Some(e) = looked_up {
+            return Err(e);
+        }
+        bail!(
+            "none of {} is running; the phone's boot control has to be started first",
+            HARDWARE_SERVICES.join(", ")
+        )
+    }
+
+    /// The name of the version the older kind is reached by, which its
+    /// calls carry; the newer kind writes its calls otherwise.
+    fn version(&self) -> Option<&'static str> {
+        match self {
+            BootControl::Newer(_) => None,
+            BootControl::Older(_, version) => Some(version),
+        }
+    }
+
+    /// Whether the phone's own boot control tells of updates at all: the
+    /// first version of the older kind came before the snapshots those
+    /// updates are made of.
+    fn tells_of_updates(&self) -> bool {
+        self.version().is_none_or(|version| version != FIRST)
     }
 
     /// The slot the bootloader starts next.
     pub fn active(&self) -> Result<Slot> {
         let number = match self {
             BootControl::Newer(c) => newer(c, GET_ACTIVE, |_| {}, |r| r.i32()),
-            BootControl::Older(c) => older(c, HARDWARE_SERVICE, ACTIVE, |_| {}, |r| r.i32()),
+            BootControl::Older(c, version) => older(c, version, ACTIVE, |_| {}, |r| r.i32()),
         }
         .context("ask which slot starts next")?;
         match number {
@@ -133,22 +174,27 @@ impl<'a> BootControl<'a> {
     fn bootable(&self, slot: Slot) -> Result<bool> {
         match self {
             BootControl::Newer(c) => newer(c, IS_BOOTABLE, |p| p.i32(slot.number() as i32), |r| r.bool()),
-            BootControl::Older(c) => older(c, FIRST, BOOTABLE, |m| m.u32(slot.number()), answered),
+            BootControl::Older(c, version) => older(c, version, BOOTABLE, |m| m.u32(slot.number()), answered),
         }
     }
 
     fn successful(&self, slot: Slot) -> Result<bool> {
         match self {
             BootControl::Newer(c) => newer(c, IS_SUCCESSFUL, |p| p.i32(slot.number() as i32), |r| r.bool()),
-            BootControl::Older(c) => older(c, FIRST, SUCCESSFUL, |m| m.u32(slot.number()), answered),
+            BootControl::Older(c, version) => older(c, version, SUCCESSFUL, |m| m.u32(slot.number()), answered),
         }
     }
 
     /// Where an update stands, as the bootloader is told.
     pub fn merge_status(&self) -> Result<MergeStatus> {
+        if !self.tells_of_updates() {
+            // The first version came before the snapshots, so it has
+            // nothing of an update in flight to tell of.
+            return Ok(MergeStatus::None);
+        }
         let said = match self {
             BootControl::Newer(c) => newer(c, GET_MERGE_STATUS, |_| {}, |r| r.i32()),
-            BootControl::Older(c) => older(c, MERGE, MERGE_STATUS, |_| {}, |r| r.i32()),
+            BootControl::Older(c, _) => older(c, MERGE, MERGE_STATUS, |_| {}, |r| r.i32()),
         }
         .context("ask where an update stands")?;
         Ok(match said {
@@ -164,9 +210,12 @@ impl<'a> BootControl<'a> {
     /// Tell the bootloader where an update stands.
     pub fn set_merge_status(&self, status: MergeStatus) -> Result<()> {
         let what = || format!("tell the bootloader an update stands at {status:?}");
+        if !self.tells_of_updates() {
+            bail!("the phone's boot control is {} and knows no updates", FIRST);
+        }
         let done = match self {
             BootControl::Newer(c) => newer(c, SET_SNAPSHOT_MERGE_STATUS, |p| p.i32(status as i32), |_| Ok(true)),
-            BootControl::Older(c) => older(c, MERGE, SET_MERGE_STATUS, |m| m.u32(status as u32), |r| r.bool()),
+            BootControl::Older(c, _) => older(c, MERGE, SET_MERGE_STATUS, |m| m.u32(status as u32), |r| r.bool()),
         }
         .with_context(what)?;
         if !done {
@@ -181,7 +230,7 @@ impl<'a> BootControl<'a> {
         let what = || format!("have slot {} start next", slot.letter());
         match self {
             BootControl::Newer(c) => newer(c, SET_ACTIVE_SLOT, |p| p.i32(slot.number() as i32), |_| Ok(())).with_context(what),
-            BootControl::Older(c) => {
+            BootControl::Older(c, _) => {
                 // The answer is whether it worked, and why not in text it
                 // points at.
                 let why = older(c, FIRST, SET_ACTIVE, |m| m.u32(slot.number()), |r| {

@@ -16,20 +16,25 @@ Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 
 ## 支持的机型
 
-> 本分支是 [kirklin/skyward](https://github.com/kirklin/skyward) 的 fork，新增了小米 10S（`thyme`，Android 13）。
+> 本分支是 [kirklin/skyward](https://github.com/kirklin/skyward) 的 fork，新增了小米 10S（`thyme`，Android 13）和红米 K40（`alioth`，Android 13）。
 > 上游只支持 Android 16/17，Android 13 没有原生 AIDL KeyMint，取密钥和让出已安装系统分区的做法都不同。
 
 | 机型 | 代号 | 测试的系统版本 |
 | --- | --- | --- |
 | 小米 10S（**本分支**） | `thyme` | OS1.0.4.0.TGACNXM（Android 13） |
+| 红米 K40（**本分支**） | `alioth` | OS1.0.10.0.TKHCNXM（Android 13） |
 
-小米 10S（`thyme`）没有独立的 recovery 分区，镜像刷进当前槽位的 boot 分区，那个槽的系统启动镜像会被它取代：
+小米 10S（`thyme`）和红米 K40（`alioth`）都没有独立的 recovery 分区，镜像刷进当前槽位的 boot 分区，那个槽的系统启动镜像会被它取代：
 
 ```sh
 unzip skyward-v0.2.0-thyme-OS1.0.4.0.TGACNXM.zip
 fastboot flash boot_a skyward-v0.2.0-thyme-OS1.0.4.0.TGACNXM.img
 fastboot reboot recovery
-Skyward 中的 adb 是 root shell，手机上无需授权：手机处于 recovery 的时候，任何人拿到手机和数据线都能访问其中的存储。
+```
+
+红米 K40 同样如此。它的原厂 boot 镜像由打包工具自己从完整更新包里取出，并按 SHA-256 核对：设备配置里的 `[stock]` 把 `partition` 写成 `boot`，别的机型写的是 `recovery`。
+
+> Skyward 中的 adb 是 root shell，手机上无需授权：手机处于 recovery 的时候，任何人拿到手机和数据线都能访问其中的存储。
 
 构建
 Skyward 使用 rust-toolchain.toml 指定的稳定版 Rust 和它的 aarch64-linux-android 目标、Android NDK r29 和 cargo-ndk 构建。recovery 服务针对手机构建，打包工具针对电脑构建：
