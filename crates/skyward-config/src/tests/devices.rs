@@ -146,6 +146,15 @@ fn the_partition_a_stock_image_comes_from_is_named_plainly() {
 }
 
 #[test]
+fn a_partition_mounted_as_the_phone_mounts_it_is_named_plainly() {
+    let with = |name: &str| DeviceConfig::parse(&format!("[device]\ncodename = \"x\"\n[partitions]\nmounted = [\"{name}\"]\n"));
+    assert_eq!(with("persist").unwrap().partitions.mounted, ["persist"]);
+    assert!(with("by-name/persist").is_err());
+    assert!(with("").is_err());
+    assert!(DeviceConfig::parse("[device]\ncodename = \"x\"\n").unwrap().partitions.mounted.is_empty(), "a phone may need none");
+}
+
+#[test]
 fn parses_alioth() {
     let cfg = DeviceConfig::parse(include_str!("../../../../devices/alioth.toml")).unwrap();
     assert_eq!(cfg.device.codename, "alioth");
