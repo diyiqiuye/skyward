@@ -104,21 +104,21 @@ jobs:
       - name: Read the stock build the recovery is made on
         id: stock
         run: tools/skyward-pack stock --config "devices/${{ matrix.device }}.toml" >> "$GITHUB_OUTPUT"
-      - name: Restore the stock recovery
+      - name: Restore the stock image
         id: cache
         uses: actions/cache@v6
         with:
-          path: stock/recovery.img
-          key: stock-recovery-${{ steps.stock.outputs.recovery }}
-      # Only what the recovery partition takes is read of the package,
+          path: stock/image.img
+          key: stock-image-${{ steps.stock.outputs.partition }}-${{ steps.stock.outputs.recovery }}
+      # Only what the recovery's own partition takes is read of the package,
       # which is several gigabytes in all.
-      - name: Take the recovery partition out of the stock package
+      - name: Take the stock image out of the package
         if: steps.cache.outputs.cache-hit != 'true'
-        run: tools/skyward-pack stock --config "devices/${{ matrix.device }}.toml" --out stock/recovery.img
-      - name: Check the stock recovery
+        run: tools/skyward-pack stock --config "devices/${{ matrix.device }}.toml" --out stock/image.img
+      - name: Check the stock image
         env:
           RECOVERY: ${{ steps.stock.outputs.recovery }}
-        run: echo "$RECOVERY  stock/recovery.img" | sha256sum --check
+        run: echo "$RECOVERY  stock/image.img" | sha256sum --check
       - name: Pack the recovery
         id: pack
         env:
@@ -128,8 +128,9 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = tag ]; then version="$GITHUB_REF_NAME"; else version="${GITHUB_SHA::7}"; fi
           name="skyward-$version-$DEVICE-$STOCK"
           mkdir out
-          tools/skyward-pack recovery --stock stock/recovery.img --binary tools/skyward --system-init tools/system-init \
-            --config "devices/$DEVICE.toml" --font resources/fonts/MiSansVF.ttf --mono resources/fonts/KirkMono-Regular.ttf \
+          tools/skyward-pack recovery --stock stock/image.img --binary tools/skyward --system-init tools/system-init \
+            --config "devices/$DEVICE.toml" --partition "${{ steps.stock.outputs.partition }}" \
+            --font resources/fonts/MiSansVF.ttf --mono resources/fonts/KirkMono-Regular.ttf \
             --mono-license resources/fonts/KirkMono-OFL.txt --out "out/$name.img"
           echo "name=$name" >> "$GITHUB_OUTPUT"
       # The image is the whole partition, flashed as it is, and most of it
