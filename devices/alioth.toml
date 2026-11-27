@@ -143,6 +143,22 @@ ready_hardware_service = "android.hardware.gatekeeper@1.0::IGatekeeper/default"
 user = "system"
 groups = ["system"]
 
+# The boot control, which the recovery reads to know which slot the
+# bootloader starts next. This phone's vendor partition ships the 1.1
+# service and not the 1.2 one, and its own init script runs it as root
+# alone, in class early_hal, registering both the 1.0 and the 1.1 name.
+#
+# A recovery that asked it by the 1.2 name alone was told the phone had no
+# boot control at all; the recovery now asks for 1.2, then 1.1, then 1.0,
+# and this is the one it finds.
+[[service]]
+path = "/vendor/bin/hw/android.hardware.boot@1.1-service"
+installed = true
+libraries = ["/mnt/system/system/lib64", "/mnt/system/system/lib64/bootstrap", "/vendor/lib64", "/vendor/lib64/hw"]
+ready_hardware_service = "android.hardware.boot@1.1::IBootControl/default"
+user = "root"
+groups = ["root"]
+
 # WLAN: Qualcomm's QCA6391, which the vendor partition's build.prop names
 # ro.hardware.wlan.chip=639x and the recovery's own prop.default agrees on,
 # on PCIe, driven by qca_cld3_qca6390 over the cnss2 platform driver. Once
