@@ -1,6 +1,8 @@
 pub mod fscrypt;
 pub mod gatekeeper;
+#[cfg(target_os = "android")]
 pub mod keymaster;
+#[cfg(target_os = "android")]
 pub mod keys;
 pub mod keystore;
 pub mod locksettings;
