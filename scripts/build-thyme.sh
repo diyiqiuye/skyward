@@ -7,11 +7,6 @@
 #   adb shell dd if=/dev/block/by-name/boot_b of=/tmp/boot_b.img bs=1M
 #   adb pull /tmp/boot_b.img boot-b-stock.img
 #
-# If what you have instead is an image an earlier build wrote, `strip` turns it
-# back into a clean baseline:
-#
-#   target/release/skyward-pack strip --image old.img --out stock-boot.img
-#
 # On Windows the build runs from a path without spaces, and a short one: rustc's
 # raw-dylib import libraries carry the build path in a symbol, and a space in it
 # breaks the link.
@@ -29,7 +24,7 @@ export CC_aarch64_linux_android=clang.exe
 export CFLAGS_aarch64_linux_android="--target=aarch64-linux-android30"
 export AR_aarch64_linux_android=llvm-ar.exe
 
-STOCK="${STOCK:?set STOCK to the phone's stock boot image}"
+STOCK="${STOCK:?set STOCK to the stock boot image of the phone}"
 OUT="${OUT:-$ROOT/target/thyme}"
 
 cd "$ROOT"
@@ -41,10 +36,16 @@ cargo build --release -p skyward-pack
 echo "==> Skyward, for the phone"
 cargo build --release --target aarch64-linux-android -p skyward
 
+echo "==> the second system's first program, linked statically"
+RUSTFLAGS="-C target-feature=+crt-static" \
+  cargo build --release --target aarch64-linux-android -p skyward-system-init \
+  --target-dir target/system-init
+
 echo "==> the image, on top of the stock boot image"
 target/release/skyward-pack recovery \
   --stock "$STOCK" \
   --binary target/aarch64-linux-android/release/skyward \
+  --system-init target/system-init/aarch64-linux-android/release/system-init \
   --config devices/thyme.toml \
   --partition boot \
   --font resources/fonts/MiSansVF.ttf \
